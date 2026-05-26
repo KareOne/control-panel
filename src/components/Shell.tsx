@@ -11,6 +11,7 @@ import {
   Package, Rocket, GitMerge, FlaskConical,
   ClipboardCheck, BarChart2, Sparkles,
   ShieldCheck, Bell, Plug, DollarSign, FileText, Search, Settings,
+  ScrollText, Milestone,
 } from "lucide-react";
 
 type NavKey = typeof NAV[number]["key"];
@@ -18,7 +19,7 @@ type NavKey = typeof NAV[number]["key"];
 /* ─── Sidebar grouping ──────────────────────────────────────────────────── */
 const NAV_GROUPS: { en: string; fa: string; items: NavKey[] }[] = [
   { en: "Dashboard",         fa: "داشبورد",         items: ["overview"] },
-  { en: "Operations",        fa: "عملیات",           items: ["containers", "server", "ports", "async"] },
+  { en: "Operations",        fa: "عملیات",           items: ["containers", "server", "ports", "async", "logs", "scraper-flow"] },
   { en: "Delivery",          fa: "تحویل",            items: ["deployments", "deploy", "migration", "tests"] },
   { en: "Quality",           fa: "کیفیت",            items: ["qa", "benchmarks", "ai-quality"] },
   { en: "Security & Control",fa: "امنیت و کنترل",   items: ["access", "alerts", "integrations"] },
@@ -46,6 +47,8 @@ const NAV_ICON: Record<NavKey, React.ReactNode> = {
   reports:     <FileText size={15} />,
   discovery:   <Search size={15} />,
   settings:    <Settings size={15} />,
+  logs:           <ScrollText size={15} />,
+  "scraper-flow": <Milestone size={15} />,
 };
 
 /* ─── Shell ─────────────────────────────────────────────────────────────── */

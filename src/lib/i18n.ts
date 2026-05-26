@@ -7,6 +7,8 @@ export const NAV = [
   { key: "server", href: "/server", en: "Server", fa: "سرور" },
   { key: "integrations", href: "/integrations", en: "Integrations", fa: "یکپارچه‌سازی‌ها" },
   { key: "async", href: "/async", en: "Async Pipeline", fa: "صف پردازش" },
+  { key: "logs", href: "/logs", en: "ELK Logs", fa: "لاگ‌های ELK" },
+  { key: "scraper-flow", href: "/scraper-flow", en: "Scraper Flow", fa: "جریان اسکرپر" },
   { key: "deployments", href: "/deployments", en: "Versions & Deploy", fa: "نسخه‌ها و استقرار" },
   { key: "tests", href: "/tests", en: "Test Logs", fa: "گزارش تست‌ها" },
   { key: "benchmarks", href: "/benchmarks", en: "Code Benchmarks", fa: "سنجه‌های کد" },
@@ -370,6 +372,12 @@ const DICT: Record<string, { en: string; fa: string }> = {
   recentCalls: { en: "Recent calls", fa: "فراخوانی‌های اخیر" },
   details: { en: "Details", fa: "جزئیات" },
   add: { en: "Add", fa: "افزودن" },
+  // ELK Log Viewer
+  logsTitle: { en: "ELK Log Viewer", fa: "مشاهده‌گر لاگ ELK" },
+  logsDesc: {
+    en: "Live Elasticsearch log stream — phase tracker, session status, and document explorer.",
+    fa: "جریان زنده لاگ‌های Elasticsearch — ردیاب فاز، وضعیت سشن و مرورگر سند.",
+  },
   // Async Pipeline Monitoring (Section 5)
   asyncTitle: { en: "Async Pipeline Monitoring", fa: "پایش صف پردازش ناهمگام" },
   asyncDesc: {
