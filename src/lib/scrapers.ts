@@ -17,7 +17,7 @@ export const DEFAULT_SCRAPERS_CONFIG: ScrapersConfig = {
   services: {
     crunchbase:    { url: "http://localhost:8003", healthPath: "/health" },
     tracxn:        { url: "http://localhost:8008", healthPath: "/health" },
-    twitter:       { url: "http://localhost:8007", healthPath: "/health" },
+    twitter:       { url: "http://localhost:8004", healthPath: "/health" },
     "news-search": { url: "http://localhost:3001", healthPath: "/api/health" },
   },
 };

@@ -108,6 +108,14 @@ interface FlowSession {
   seenPhases: PhaseEvent[];
 }
 
+interface StepProbe {
+  ok: boolean;
+  statusCode?: number;
+  latencyMs: number;
+  data?: unknown;
+  error?: string;
+}
+
 interface ServiceHealth {
   url: string;
   ok: boolean;
@@ -115,6 +123,7 @@ interface ServiceHealth {
   status: string;
   data: Record<string, unknown> | null;
   error?: string;
+  steps?: Record<string, StepProbe>;
 }
 
 interface WorkersByType {
@@ -483,6 +492,30 @@ function ServiceHealthCard({
           ))}
         </div>
       </div>
+
+      {/* Real step probes */}
+      {health?.steps && (
+        <div className="px-4 pb-3 flex flex-wrap gap-2">
+          {Object.entries(health.steps).map(([name, probe]) => (
+            <div
+              key={name}
+              className="flex items-center gap-1.5 rounded px-2 py-1 text-[10px] font-mono border"
+              style={{
+                background: probe.ok ? "#14532d22" : "#7f1d1d22",
+                borderColor: probe.ok ? "#16a34a44" : "#dc262644",
+                color: probe.ok ? "#4ade80" : "#f87171",
+              }}
+              title={probe.error ?? (probe.statusCode ? `HTTP ${probe.statusCode}` : "")}
+            >
+              {probe.ok ? "✓" : "✗"} {name}
+              <span style={{ color: "var(--text-muted)", fontSize: 9 }}>{probe.latencyMs}ms</span>
+              {!probe.ok && probe.statusCode && (
+                <span style={{ color: "#f87171" }}>HTTP {probe.statusCode}</span>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
 
       {/* Error */}
       {health && !health.ok && health.error && (
