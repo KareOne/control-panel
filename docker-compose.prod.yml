@@ -31,6 +31,8 @@ services:
     image: devops-panel-app:latest
     container_name: devops-panel-app
     restart: unless-stopped
+    pid: "host"
+    privileged: true
     depends_on:
       db:
         condition: service_healthy
