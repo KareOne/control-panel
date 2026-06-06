@@ -5,7 +5,7 @@ import { PageHeader, EmptyState } from "@/components/Shell";
 import { useUI } from "@/components/Providers";
 import { t, fmtDate, type Lang } from "@/lib/i18n";
 import { fetcher } from "@/lib/fetcher";
-import { AlertTriangle, Plus, Trash2, KeyRound, Check, X } from "lucide-react";
+import { AlertTriangle, Plus, Trash2, KeyRound, Check, X, Monitor, ShieldCheck, QrCode } from "lucide-react";
 
 const ROLES = ["ADMIN", "ENGINEER", "REVIEWER", "READONLY"] as const;
 type Role = (typeof ROLES)[number];
@@ -103,7 +103,7 @@ const btnCls =
 
 export default function Page() {
   const { lang } = useUI();
-  const [tab, setTab] = useState<"users" | "scenarios" | "audit">("users");
+  const [tab, setTab] = useState<"users" | "scenarios" | "audit" | "sessions" | "2fa">("users");
   const { data: me } = useSWR<Me>("/api/auth/me", fetcher);
   const isAdmin = me?.role === "ADMIN";
   const isEngineer =
@@ -112,12 +112,14 @@ export default function Page() {
   return (
     <div>
       <PageHeader title={t("accessTitle", lang)} desc={t("accessDesc", lang)} />
-      <div className="px-6 pt-4 flex gap-2 border-b border-zinc-200 dark:border-zinc-800">
+      <div className="px-6 pt-4 flex gap-2 flex-wrap border-b border-zinc-200 dark:border-zinc-800">
         {(
           [
             ["users", "acTabUsers"],
             ["scenarios", "acTabScenarios"],
             ["audit", "acTabAudit"],
+            ["sessions", "acTabSessions"],
+            ["2fa", "acTab2fa"],
           ] as const
         ).map(([k, key]) => (
           <button
@@ -125,7 +127,7 @@ export default function Page() {
             onClick={() => setTab(k)}
             className={`px-3 py-2 text-sm border-b-2 -mb-px ${
               tab === k
-                ? "border-[#C7B299] text-white"
+                ? "border-[#7AB2B2] text-white"
                 : "border-transparent text-zinc-500"
             }`}
           >
@@ -141,6 +143,8 @@ export default function Page() {
           <ScenariosTab lang={lang} isEngineer={!!isEngineer} />
         )}
         {tab === "audit" && <AuditTab lang={lang} />}
+        {tab === "sessions" && <SessionsTab lang={lang} isAdmin={!!isAdmin} meId={me?.id ?? ""} />}
+        {tab === "2fa" && <TotpTab lang={lang} />}
       </div>
     </div>
   );
@@ -773,6 +777,269 @@ function AuditTab({ lang }: { lang: Lang }) {
           {loading ? t("loading", lang) : t("acAuLoadMore", lang)}
         </button>
       )}
+    </div>
+  );
+}
+
+// ─── Sessions Tab ─────────────────────────────────────────────────────────────
+
+type SessionRow = {
+  id: string;
+  userId: string;
+  userName: string;
+  userEmail: string;
+  createdAt: string;
+  lastSeenAt: string;
+  expiresAt: string;
+  ip: string | null;
+  userAgent: string | null;
+  revokedAt: string | null;
+  isActive: boolean;
+};
+
+function SessionsTab({ lang, isAdmin, meId }: { lang: Lang; isAdmin: boolean; meId: string }) {
+  const { data, mutate } = useSWR<SessionRow[]>("/api/access/sessions", fetcher, { refreshInterval: 15000 });
+  const [revoking, setRevoking] = useState<string | null>(null);
+  const [err, setErr] = useState("");
+
+  async function revoke(id: string) {
+    setRevoking(id);
+    setErr("");
+    const r = await fetch(`/api/access/sessions/${id}`, { method: "DELETE", credentials: "include" });
+    setRevoking(null);
+    if (!r.ok) setErr((await r.json().catch(() => ({}))).error || "Failed");
+    else mutate();
+  }
+
+  const active = (data ?? []).filter((s) => s.isActive);
+  const inactive = (data ?? []).filter((s) => !s.isActive);
+
+  return (
+    <div className="space-y-6 max-w-4xl">
+      <div>
+        <h2 className="text-base font-semibold mb-1 flex items-center gap-2">
+          <Monitor size={15} style={{ color: "var(--accent)" }} />
+          {t("acSessionsTitle", lang)}
+        </h2>
+        <p className="text-xs mb-4" style={{ color: "var(--text-muted)" }}>
+          {t("acSessionsDesc", lang)}
+        </p>
+        {err && <p className="text-xs text-red-400 mb-2">{err}</p>}
+
+        {!data ? (
+          <p className="text-sm" style={{ color: "var(--text-muted)" }}>{t("loading", lang)}</p>
+        ) : active.length === 0 ? (
+          <p className="text-sm" style={{ color: "var(--text-muted)" }}>No active sessions.</p>
+        ) : (
+          <div className="rounded-lg overflow-hidden border" style={{ borderColor: "var(--border)" }}>
+            <table className="w-full text-xs">
+              <thead>
+                <tr style={{ background: "var(--bg-card)", color: "var(--text-muted)" }}>
+                  {isAdmin && <th className="text-start px-3 py-2">User</th>}
+                  <th className="text-start px-3 py-2">IP</th>
+                  <th className="text-start px-3 py-2">Device</th>
+                  <th className="text-start px-3 py-2">Created</th>
+                  <th className="text-start px-3 py-2">Last seen</th>
+                  <th className="text-start px-3 py-2">Expires</th>
+                  <th className="px-3 py-2"></th>
+                </tr>
+              </thead>
+              <tbody>
+                {active.map((s) => (
+                  <tr key={s.id} className="border-t" style={{ borderColor: "var(--border)" }}>
+                    {isAdmin && (
+                      <td className="px-3 py-2">
+                        <span style={{ color: "var(--text-main)" }}>{s.userName}</span>
+                        <span className="block" style={{ color: "var(--text-muted)" }}>{s.userEmail}</span>
+                      </td>
+                    )}
+                    <td className="px-3 py-2 font-mono">{s.ip || "—"}</td>
+                    <td className="px-3 py-2 max-w-[180px] truncate" title={s.userAgent ?? ""} style={{ color: "var(--text-muted)" }}>
+                      {s.userAgent ? s.userAgent.split(" ")[0] : "—"}
+                    </td>
+                    <td className="px-3 py-2 whitespace-nowrap">{fmtDate(s.createdAt, lang)}</td>
+                    <td className="px-3 py-2 whitespace-nowrap">{fmtDate(s.lastSeenAt, lang)}</td>
+                    <td className="px-3 py-2 whitespace-nowrap">{fmtDate(s.expiresAt, lang)}</td>
+                    <td className="px-3 py-2">
+                      <button
+                        disabled={revoking === s.id}
+                        onClick={() => revoke(s.id)}
+                        className="rounded px-2 py-0.5 text-xs"
+                        style={{ background: "var(--danger)", color: "#fff", opacity: revoking === s.id ? 0.5 : 1 }}
+                      >
+                        {t("acSessionRevoke", lang)}
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+
+      {inactive.length > 0 && (
+        <details className="text-xs" style={{ color: "var(--text-muted)" }}>
+          <summary className="cursor-pointer select-none">{inactive.length} expired / revoked session(s)</summary>
+          <div className="mt-2 rounded border p-3 space-y-1" style={{ borderColor: "var(--border)" }}>
+            {inactive.map((s) => (
+              <div key={s.id} className="flex gap-4">
+                {isAdmin && <span className="font-medium">{s.userName}</span>}
+                <span className="font-mono">{s.ip || "—"}</span>
+                <span>{fmtDate(s.lastSeenAt, lang)}</span>
+                <span className="italic">{s.revokedAt ? "revoked" : "expired"}</span>
+              </div>
+            ))}
+          </div>
+        </details>
+      )}
+    </div>
+  );
+}
+
+// ─── 2FA Tab ──────────────────────────────────────────────────────────────────
+
+type MeWithTotp = { id: string; totpEnabled: boolean } | null;
+
+function TotpTab({ lang }: { lang: Lang }) {
+  const { data: me, mutate } = useSWR<MeWithTotp>("/api/auth/me", fetcher);
+  const [enrollUri, setEnrollUri] = useState<string | null>(null);
+  const [verifyCode, setVerifyCode] = useState("");
+  const [disableCode, setDisableCode] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+  const [ok, setOk] = useState("");
+
+  async function startEnroll() {
+    setBusy(true); setErr(""); setOk("");
+    const r = await fetch("/api/access/totp", { credentials: "include" });
+    setBusy(false);
+    if (!r.ok) { setErr((await r.json().catch(() => ({}))).error || "Failed"); return; }
+    const d = await r.json();
+    setEnrollUri(d.uri);
+    setVerifyCode("");
+  }
+
+  async function confirmEnroll() {
+    setBusy(true); setErr("");
+    const r = await fetch("/api/access/totp", {
+      method: "POST",
+      credentials: "include",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ code: verifyCode }),
+    });
+    setBusy(false);
+    if (!r.ok) { setErr((await r.json().catch(() => ({}))).error || "Invalid code"); return; }
+    setOk("2FA enabled successfully."); setEnrollUri(null); setVerifyCode("");
+    mutate();
+  }
+
+  async function disable() {
+    setBusy(true); setErr("");
+    const r = await fetch("/api/access/totp", {
+      method: "DELETE",
+      credentials: "include",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ code: disableCode }),
+    });
+    setBusy(false);
+    if (!r.ok) { setErr((await r.json().catch(() => ({}))).error || "Failed"); return; }
+    setOk("2FA disabled."); setDisableCode("");
+    mutate();
+  }
+
+  if (!me) return <p className="text-sm" style={{ color: "var(--text-muted)" }}>{t("loading", lang)}</p>;
+
+  return (
+    <div className="max-w-md space-y-6">
+      <div>
+        <h2 className="text-base font-semibold mb-1 flex items-center gap-2">
+          <ShieldCheck size={15} style={{ color: "var(--accent)" }} />
+          {t("ac2faTitle", lang)}
+        </h2>
+        <p className="text-xs mb-4" style={{ color: "var(--text-muted)" }}>
+          {t("ac2faDesc", lang)}
+        </p>
+
+        <div className="flex items-center gap-2 mb-4">
+          <span className={`text-xs rounded px-2 py-0.5 border ${me.totpEnabled ? "border-emerald-700/40 bg-emerald-600/10 text-emerald-400" : "border-zinc-700/40 bg-zinc-800/30 text-zinc-400"}`}>
+            {me.totpEnabled ? t("ac2faEnabled", lang) : t("ac2faDisabled", lang)}
+          </span>
+        </div>
+
+        {err && <p className="text-xs text-red-400 mb-2">{err}</p>}
+        {ok && <p className="text-xs text-emerald-400 mb-2">{ok}</p>}
+
+        {!me.totpEnabled ? (
+          <div className="space-y-3">
+            {!enrollUri ? (
+              <button
+                disabled={busy}
+                onClick={startEnroll}
+                className="flex items-center gap-2 rounded px-3 py-1.5 text-sm text-white disabled:opacity-50"
+                style={{ background: "var(--primary)" }}
+              >
+                <QrCode size={13} /> {t("ac2faEnroll", lang)}
+              </button>
+            ) : (
+              <div className="space-y-3">
+                <p className="text-xs" style={{ color: "var(--text-muted)" }}>
+                  {t("ac2faScanHint", lang)}
+                </p>
+                <div className="rounded p-3 font-mono text-xs break-all" style={{ background: "var(--bg-card)", border: "1px solid var(--border)", color: "var(--text-muted)" }}>
+                  {enrollUri}
+                </div>
+                <p className="text-xs" style={{ color: "var(--text-muted)" }}>{t("ac2faEnterCode", lang)}</p>
+                <div className="flex gap-2">
+                  <input
+                    className="rounded px-3 py-1.5 text-sm font-mono tracking-widest w-32"
+                    style={{ background: "var(--bg-card)", border: "1px solid var(--border)", color: "var(--text-main)" }}
+                    placeholder="000000"
+                    value={verifyCode}
+                    onChange={(e) => setVerifyCode(e.target.value.replace(/\D/g, "").slice(0, 6))}
+                    maxLength={6}
+                    inputMode="numeric"
+                  />
+                  <button
+                    disabled={busy || verifyCode.length !== 6}
+                    onClick={confirmEnroll}
+                    className="rounded px-3 py-1.5 text-sm text-white disabled:opacity-50"
+                    style={{ background: "var(--primary)" }}
+                  >
+                    {t("ac2faVerify", lang)}
+                  </button>
+                  <button onClick={() => { setEnrollUri(null); setErr(""); }} className="text-xs" style={{ color: "var(--text-muted)" }}>
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+        ) : (
+          <div className="space-y-2">
+            <p className="text-xs" style={{ color: "var(--text-muted)" }}>{t("ac2faDisableHint", lang)}</p>
+            <div className="flex gap-2">
+              <input
+                className="rounded px-3 py-1.5 text-sm font-mono tracking-widest w-32"
+                style={{ background: "var(--bg-card)", border: "1px solid var(--border)", color: "var(--text-main)" }}
+                placeholder="000000"
+                value={disableCode}
+                onChange={(e) => setDisableCode(e.target.value.replace(/\D/g, "").slice(0, 6))}
+                maxLength={6}
+                inputMode="numeric"
+              />
+              <button
+                disabled={busy || disableCode.length !== 6}
+                onClick={disable}
+                className="rounded px-3 py-1.5 text-sm text-white disabled:opacity-50"
+                style={{ background: "var(--danger)" }}
+              >
+                {t("ac2faDisable", lang)}
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
     </div>
   );
 }

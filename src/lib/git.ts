@@ -68,6 +68,40 @@ export interface CommitInfo {
   date: string;
   message: string;
   changedFiles: string[];
+  branches: string[];
+  issueRefs: string[];
+}
+
+const ISSUE_REGEX = /(?:#|GH-|gh-)(\d{1,7})|([A-Z][A-Z0-9]+-\d+)/g;
+
+function extractIssueRefs(message: string): string[] {
+  const out = new Set<string>();
+  let m: RegExpExecArray | null;
+  ISSUE_REGEX.lastIndex = 0;
+  while ((m = ISSUE_REGEX.exec(message))) {
+    if (m[1]) out.add(`#${m[1]}`);
+    if (m[2]) out.add(m[2]);
+  }
+  return Array.from(out);
+}
+
+async function branchesForSha(git: SimpleGit, sha: string): Promise<string[]> {
+  try {
+    const raw = await git.raw([
+      "branch",
+      "--all",
+      "--contains",
+      sha,
+      "--format=%(refname:short)",
+    ]);
+    return raw
+      .split("\n")
+      .map((s) => s.trim())
+      .filter(Boolean)
+      .filter((b) => !b.startsWith("HEAD"));
+  } catch {
+    return [];
+  }
 }
 
 export async function log(opts: { maxCount?: number } = {}): Promise<CommitInfo[]> {
@@ -91,6 +125,7 @@ export async function log(opts: { maxCount?: number } = {}): Promise<CommitInfo[
     } catch {
       changedFiles = [];
     }
+    const branches = await branchesForSha(git, c.hash);
     out.push({
       sha: c.hash,
       shortSha: c.hash.slice(0, 8),
@@ -99,6 +134,8 @@ export async function log(opts: { maxCount?: number } = {}): Promise<CommitInfo[
       date: c.date,
       message: c.message,
       changedFiles,
+      branches,
+      issueRefs: extractIssueRefs(c.message),
     });
   }
   return out;

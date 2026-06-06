@@ -6,6 +6,31 @@ import { useUI } from "@/components/Providers";
 import { t, fmtDate } from "@/lib/i18n";
 import { fetcher } from "@/lib/fetcher";
 
+function timeAgo(dateStr: string): string {
+  const diff = Date.now() - new Date(dateStr).getTime();
+  const s = Math.floor(diff / 1000);
+  if (s < 60) return `${s}s ago`;
+  const m = Math.floor(s / 60);
+  if (m < 60) return `${m}m ago`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `${h}h ago`;
+  const d = Math.floor(h / 24);
+  return `${d}d ago`;
+}
+
+function parseOwner(notes: string | null | undefined): string | null {
+  if (!notes) return null;
+  const match = notes.match(/^\[OWNER:([^\]]+)\]/);
+  return match ? match[1] : null;
+}
+
+const SEV_BORDER: Record<string, string> = {
+  INFO: "4px solid #0ea5e9",
+  WARN: "4px solid #f59e0b",
+  ERROR: "4px solid #ef4444",
+  CRITICAL: "4px solid #a21caf",
+};
+
 type Role = "ADMIN" | "ENGINEER" | "REVIEWER" | "READONLY";
 type Me = { id: string; name: string; role: Role } | undefined;
 const RANK: Record<Role, number> = {
@@ -53,6 +78,12 @@ export default function Page() {
   const [fStatus, setFStatus] = useState("");
   const [fSev, setFSev] = useState("");
   const [fSrc, setFSrc] = useState("");
+
+  // Per-event UI state
+  const [resolving, setResolving] = useState<Record<string, boolean>>({});
+  const [assignOpen, setAssignOpen] = useState<Record<string, boolean>>({});
+  const [assignValue, setAssignValue] = useState<Record<string, string>>({});
+  const [assigning, setAssigning] = useState<Record<string, boolean>>({});
 
   const evQs = new URLSearchParams();
   if (fStatus) evQs.set("status", fStatus);
@@ -131,7 +162,7 @@ export default function Page() {
             onClick={() => setTab(tk)}
             className={`rounded px-3 py-1.5 border ${
               tab === tk
-                ? "bg-[#183661] text-white border-[#183661]"
+                ? "bg-[#09637E] text-white border-[#09637E]"
                 : "border-zinc-300 dark:border-zinc-700 hover:bg-zinc-100 dark:hover:bg-zinc-800"
             }`}
           >
@@ -152,6 +183,7 @@ export default function Page() {
               <option value="open">open</option>
               <option value="acked">acked</option>
               <option value="snoozed">snoozed</option>
+              <option value="resolved">resolved</option>
             </select>
             <select
               value={fSev}
@@ -177,91 +209,179 @@ export default function Page() {
             <EmptyState msg={t("alNoEvents", lang)} />
           ) : (
             <div className="space-y-3">
-              {ev.events.map((e: any) => (
-                <div
-                  key={e.id}
-                  className="rounded-lg border border-zinc-200 dark:border-zinc-800 p-4"
-                >
-                  <div className="flex items-center gap-2 flex-wrap">
-                    <span
-                      className={`rounded border px-2 py-0.5 text-xs ${
-                        SEV_CLASS[e.severity] || ""
-                      }`}
-                    >
-                      {e.severity}
-                    </span>
-                    <span className="text-xs text-zinc-500">{e.source}</span>
-                    <span className="font-medium">{e.title}</span>
-                    {e.suppressedCount > 0 && (
-                      <span className="rounded border border-zinc-600 px-2 py-0.5 text-xs text-zinc-400">
-                        +{e.suppressedCount} {t("alSuppressed", lang)}
-                      </span>
-                    )}
-                    <span className="text-xs text-zinc-500 ms-auto">
-                      {fmtDate(e.createdAt, lang)}
-                    </span>
-                  </div>
-                  {e.payload?.line && (
-                    <pre className="mt-2 overflow-x-auto rounded bg-zinc-100 dark:bg-zinc-900 p-2 text-xs text-zinc-600 dark:text-zinc-400">
-                      {String(e.payload.line)}
-                    </pre>
-                  )}
-                  <div className="mt-2 flex flex-wrap items-center gap-2 text-xs">
-                    <span className="text-zinc-500">
-                      {t("alStatus", lang)}: {e.ackStatus}
-                    </span>
-                    {e.deliveries?.map((d: any) => (
+              {ev.events.map((e: any) => {
+                const owner = parseOwner(e.notes);
+                const isResolved = e.ackStatus === "resolved";
+                return (
+                  <div
+                    key={e.id}
+                    className="rounded-lg border border-zinc-200 dark:border-zinc-800 p-4"
+                    style={{ borderLeft: SEV_BORDER[e.severity] || "4px solid var(--border)" }}
+                  >
+                    <div className="flex items-center gap-2 flex-wrap">
                       <span
-                        key={d.id}
-                        title={d.lastError || ""}
-                        className={`rounded border px-2 py-0.5 ${
-                          DEL_CLASS[d.status] || ""
+                        className={`rounded border px-2 py-0.5 text-xs ${
+                          SEV_CLASS[e.severity] || ""
                         }`}
                       >
-                        {d.channel?.name}: {d.status}
+                        {e.severity}
                       </span>
-                    ))}
-                    {isEng && e.ackStatus !== "acked" && (
-                      <>
+                      <span className="text-xs text-zinc-500">{e.source}</span>
+                      <span className="font-medium">{e.title}</span>
+                      {e.suppressedCount > 0 && (
+                        <span className="rounded border border-zinc-600 px-2 py-0.5 text-xs text-zinc-400">
+                          +{e.suppressedCount} {t("alSuppressed", lang)}
+                        </span>
+                      )}
+                      {owner && (
+                        <span className="rounded border border-sky-700/40 bg-sky-600/10 px-2 py-0.5 text-xs text-sky-300">
+                          Owner: {owner}
+                        </span>
+                      )}
+                      <span className="text-xs text-zinc-500 ms-auto" title={fmtDate(e.createdAt, lang)}>
+                        {timeAgo(e.createdAt)}
+                      </span>
+                    </div>
+                    {e.payload?.line && (
+                      <pre className="mt-2 overflow-x-auto rounded bg-zinc-100 dark:bg-zinc-900 p-2 text-xs text-zinc-600 dark:text-zinc-400">
+                        {String(e.payload.line)}
+                      </pre>
+                    )}
+                    <div className="mt-2 flex flex-wrap items-center gap-2 text-xs">
+                      <span className="text-zinc-500">
+                        {t("alStatus", lang)}: {e.ackStatus}
+                      </span>
+                      {e.deliveries?.map((d: any) => (
+                        <span
+                          key={d.id}
+                          title={d.lastError || ""}
+                          className={`rounded border px-2 py-0.5 ${
+                            DEL_CLASS[d.status] || ""
+                          }`}
+                        >
+                          {d.channel?.name}: {d.status}
+                        </span>
+                      ))}
+                      {isEng && !isResolved && e.ackStatus !== "acked" && (
+                        <>
+                          <button
+                            onClick={async () => {
+                              try {
+                                await api(
+                                  `/api/alerts/events/${e.id}/ack`,
+                                  "POST",
+                                  {}
+                                );
+                                mutEv();
+                              } catch (err: any) {
+                                flash(err.message);
+                              }
+                            }}
+                            className="rounded border border-emerald-600/50 px-2 py-0.5 hover:bg-emerald-600/20"
+                          >
+                            {t("alAck", lang)}
+                          </button>
+                          <button
+                            onClick={async () => {
+                              try {
+                                await api(
+                                  `/api/alerts/events/${e.id}/snooze`,
+                                  "POST",
+                                  { hours: 1 }
+                                );
+                                mutEv();
+                              } catch (err: any) {
+                                flash(err.message);
+                              }
+                            }}
+                            className="rounded border border-amber-600/50 px-2 py-0.5 hover:bg-amber-600/20"
+                          >
+                            {t("alSnooze1h", lang)}
+                          </button>
+                        </>
+                      )}
+                      {isEng && !isResolved && (
                         <button
+                          disabled={resolving[e.id]}
                           onClick={async () => {
+                            setResolving((p) => ({ ...p, [e.id]: true }));
                             try {
                               await api(
-                                `/api/alerts/events/${e.id}/ack`,
+                                `/api/alerts/events/${e.id}/resolve`,
                                 "POST",
                                 {}
                               );
                               mutEv();
                             } catch (err: any) {
                               flash(err.message);
+                            } finally {
+                              setResolving((p) => ({ ...p, [e.id]: false }));
                             }
                           }}
-                          className="rounded border border-emerald-600/50 px-2 py-0.5 hover:bg-emerald-600/20"
+                          className="rounded border border-red-600/50 px-2 py-0.5 hover:bg-red-600/20 disabled:opacity-50"
                         >
-                          {t("alAck", lang)}
+                          {resolving[e.id] ? "…" : "Resolve"}
                         </button>
-                        <button
-                          onClick={async () => {
-                            try {
-                              await api(
-                                `/api/alerts/events/${e.id}/snooze`,
-                                "POST",
-                                { hours: 1 }
-                              );
-                              mutEv();
-                            } catch (err: any) {
-                              flash(err.message);
-                            }
-                          }}
-                          className="rounded border border-amber-600/50 px-2 py-0.5 hover:bg-amber-600/20"
-                        >
-                          {t("alSnooze1h", lang)}
-                        </button>
-                      </>
-                    )}
+                      )}
+                      {isEng && (
+                        assignOpen[e.id] ? (
+                          <span className="flex items-center gap-1 ms-auto">
+                            <input
+                              autoFocus
+                              value={assignValue[e.id] ?? (owner || "")}
+                              onChange={(ev2) =>
+                                setAssignValue((p) => ({ ...p, [e.id]: ev2.target.value }))
+                              }
+                              placeholder="Owner name"
+                              className="rounded border border-zinc-600 bg-transparent px-2 py-0.5 text-xs w-32"
+                            />
+                            <button
+                              disabled={assigning[e.id]}
+                              onClick={async () => {
+                                setAssigning((p) => ({ ...p, [e.id]: true }));
+                                try {
+                                  await api(
+                                    `/api/alerts/events/${e.id}/owner`,
+                                    "PATCH",
+                                    { owner: assignValue[e.id]?.trim() || null }
+                                  );
+                                  mutEv();
+                                  setAssignOpen((p) => ({ ...p, [e.id]: false }));
+                                } catch (err: any) {
+                                  flash(err.message);
+                                } finally {
+                                  setAssigning((p) => ({ ...p, [e.id]: false }));
+                                }
+                              }}
+                              className="rounded border border-sky-600/50 px-2 py-0.5 hover:bg-sky-600/20 disabled:opacity-50"
+                            >
+                              {assigning[e.id] ? "…" : "Save"}
+                            </button>
+                            <button
+                              onClick={() =>
+                                setAssignOpen((p) => ({ ...p, [e.id]: false }))
+                              }
+                              className="rounded border border-zinc-600 px-2 py-0.5 hover:bg-zinc-700"
+                            >
+                              ✕
+                            </button>
+                          </span>
+                        ) : (
+                          <button
+                            onClick={() => {
+                              setAssignValue((p) => ({ ...p, [e.id]: owner || "" }));
+                              setAssignOpen((p) => ({ ...p, [e.id]: true }));
+                            }}
+                            className="rounded border border-zinc-600 px-2 py-0.5 hover:bg-zinc-700 ms-auto"
+                          >
+                            {owner ? "Reassign" : "Assign"}
+                          </button>
+                        )
+                      )}
+                    </div>
                   </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           )}
         </div>
@@ -600,7 +720,7 @@ function ChannelForm({ lang, onDone }: { lang: any; onDone: () => void }) {
             setErr(e.message);
           }
         }}
-        className="rounded bg-[#183661] text-white px-3 py-1.5"
+        className="rounded bg-[#09637E] text-white px-3 py-1.5"
       >
         {t("alAdd", lang)}
       </button>
@@ -656,7 +776,7 @@ function ConfigForm({
             setErr(e.message);
           }
         }}
-        className="rounded bg-[#183661] text-white px-3 py-1.5"
+        className="rounded bg-[#09637E] text-white px-3 py-1.5"
       >
         {t("alSave", lang)}
       </button>

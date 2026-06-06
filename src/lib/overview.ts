@@ -1303,6 +1303,191 @@ export async function quickStats(alertCount: number): Promise<QuickStats> {
   };
 }
 
+// ───────────────────────── calculateReadinessScore ─────────────────────────
+
+export interface ScoreBreakdownItem {
+  label: string;
+  points: number;
+  detail: string;
+}
+
+export interface CalculatedReadiness {
+  score: number;
+  breakdown: ScoreBreakdownItem[];
+  deployStatus: "ALLOWED" | "BLOCKED" | "WARNED";
+}
+
+/**
+ * Honest deduction-based score. Starts at 100 and subtracts points for each
+ * real problem. Returns a breakdown array explaining every deduction and a
+ * deployStatus derived from the final score + critical conditions.
+ *
+ * Takes already-fetched data (alerts, components, lastDep) to avoid
+ * duplicating queries — always called AFTER readinessScore() and activeAlerts()
+ * in the API route.
+ */
+export function calculateReadinessScore(
+  alerts: Alert[],
+  components: ScoreComponent[],
+  lastDep: LastDeployment | null
+): CalculatedReadiness {
+  const breakdown: ScoreBreakdownItem[] = [];
+  let score = 100;
+
+  // ── 1. Critical alerts: -15 each, cap -45 ──
+  const criticals = alerts.filter((a) => a.severity === "critical");
+  const critDeduction = Math.min(criticals.length * 15, 45);
+  if (criticals.length > 0) {
+    score -= critDeduction;
+    breakdown.push({
+      label: "Critical alerts",
+      points: -critDeduction,
+      detail: `${criticals.length} critical alert${criticals.length === 1 ? "" : "s"} open`,
+    });
+  } else {
+    breakdown.push({
+      label: "Critical alerts",
+      points: 0,
+      detail: "No critical alerts",
+    });
+  }
+
+  // ── 2. Warning alerts: -5 each, cap -20 ──
+  const warnings = alerts.filter((a) => a.severity === "warning");
+  const warnDeduction = Math.min(warnings.length * 5, 20);
+  if (warnings.length > 0) {
+    score -= warnDeduction;
+    breakdown.push({
+      label: "Warning alerts",
+      points: -warnDeduction,
+      detail: `${warnings.length} warning${warnings.length === 1 ? "" : "s"} open`,
+    });
+  } else {
+    breakdown.push({
+      label: "Warning alerts",
+      points: 0,
+      detail: "No warnings",
+    });
+  }
+
+  // ── 3. Failing containers: -10 each, cap -30 ──
+  const containerComp = components.find((c) => c.key === "containers");
+  if (containerComp?.available && containerComp.detail) {
+    // detail is "running/total"
+    const parts = containerComp.detail.split("/");
+    const running = parseInt(parts[0] ?? "0", 10);
+    const total = parseInt(parts[1] ?? "0", 10);
+    const failing = total - running;
+    if (failing > 0) {
+      const containerDeduction = Math.min(failing * 10, 30);
+      score -= containerDeduction;
+      breakdown.push({
+        label: "Container health",
+        points: -containerDeduction,
+        detail: `${failing} container${failing === 1 ? "" : "s"} not running (${running}/${total} running)`,
+      });
+    } else {
+      breakdown.push({
+        label: "Container health",
+        points: 0,
+        detail: total > 0 ? `All ${total} containers running` : "No containers tracked",
+      });
+    }
+  } else {
+    breakdown.push({
+      label: "Container health",
+      points: 0,
+      detail: containerComp?.note ?? "Container data unavailable — excluded",
+    });
+  }
+
+  // ── 4. Test pass rate < 80%: -10 ──
+  const testComp = components.find((c) => c.key === "tests");
+  if (testComp?.available && testComp.score != null) {
+    const rate = testComp.score / 100;
+    if (rate < 0.8) {
+      score -= 10;
+      breakdown.push({
+        label: "Test pass rate",
+        points: -10,
+        detail: `${testComp.score}% pass rate — below 80% threshold`,
+      });
+    } else {
+      breakdown.push({
+        label: "Test pass rate",
+        points: 0,
+        detail: `${testComp.score}% pass rate${testComp.detail ? ` (${testComp.detail})` : ""}`,
+      });
+    }
+  } else {
+    breakdown.push({
+      label: "Test pass rate",
+      points: 0,
+      detail: testComp?.note ?? "No test data — excluded",
+    });
+  }
+
+  // ── 5. Quality gate blocking: check alerts for deploy-related critical issues ──
+  // A quality gate is considered "blocking" when there is a critical deploy or
+  // migration alert — these are the same signals that cause the gate to block.
+  const gateBlockingAlert = alerts.find(
+    (a) =>
+      a.severity === "critical" &&
+      (a.area === "deploy" || a.id === "migration-failed")
+  );
+  if (gateBlockingAlert) {
+    score -= 20;
+    breakdown.push({
+      label: "Quality / deploy gate",
+      points: -20,
+      detail: gateBlockingAlert.message,
+    });
+  } else {
+    breakdown.push({
+      label: "Quality / deploy gate",
+      points: 0,
+      detail: "No gate blocking conditions",
+    });
+  }
+
+  // ── 6. No recent successful deploy (>7 days): -5 ──
+  const sevenDaysAgo = Date.now() - 7 * 24 * 3600_000;
+  if (!lastDep || new Date(lastDep.at).getTime() < sevenDaysAgo) {
+    score -= 5;
+    breakdown.push({
+      label: "Recent deployment",
+      points: -5,
+      detail: lastDep
+        ? `Last deploy was ${Math.floor((Date.now() - new Date(lastDep.at).getTime()) / 86400_000)} days ago (>${7} day threshold)`
+        : "No deployment on record",
+    });
+  } else {
+    const daysAgo = Math.floor((Date.now() - new Date(lastDep.at).getTime()) / 86400_000);
+    breakdown.push({
+      label: "Recent deployment",
+      points: 0,
+      detail: `Last deploy ${daysAgo === 0 ? "today" : `${daysAgo} day${daysAgo === 1 ? "" : "s"} ago`} to ${lastDep.env}`,
+    });
+  }
+
+  // Clamp to [0, 100]
+  score = Math.max(0, Math.min(100, score));
+
+  // ── Deploy status ──
+  const hasCritical = criticals.length > 0;
+  const hasGateBlock = gateBlockingAlert != null;
+  let deployStatus: CalculatedReadiness["deployStatus"];
+  if (score < 60 || hasCritical || hasGateBlock) {
+    deployStatus = "BLOCKED";
+  } else if (score < 80) {
+    deployStatus = "WARNED";
+  } else {
+    deployStatus = "ALLOWED";
+  }
+
+  return { score, breakdown, deployStatus };
+}
+
 // ───────────────────────── recentChangesTimeline ─────────────────────────
 
 export interface TimelineEvent {

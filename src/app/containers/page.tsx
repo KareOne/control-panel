@@ -5,6 +5,7 @@ import { PageHeader, EmptyState } from "@/components/Shell";
 import { useUI } from "@/components/Providers";
 import { t } from "@/lib/i18n";
 import { fetcher } from "@/lib/fetcher";
+import { ConfirmDialog } from "@/components/ConfirmDialog";
 
 // ─── Types ───────────────────────────────────────────────────────
 type Container = {
@@ -159,7 +160,7 @@ function LogDrawer({ id, name, onClose }: { id: string; name: string; onClose: (
           <span className="font-medium text-sm flex-1 truncate min-w-0">{t("liveLogs", lang)} · {name}</span>
           {(["ALL", "ERROR", "WARN", "INFO"] as const).map((l) => (
             <button key={l} onClick={() => setLevel(l)}
-              className={`rounded border px-2 py-1 text-[10px] ${level === l ? "border-[#183661] bg-[#183661]/30 text-white" : "border-zinc-700 text-zinc-500"}`}>
+              className={`rounded border px-2 py-1 text-[10px] ${level === l ? "border-[#09637E] bg-[#09637E]/30 text-white" : "border-zinc-700 text-zinc-500"}`}>
               {l}
             </button>
           ))}
@@ -226,7 +227,7 @@ function ExecPanel({ id }: { id: string }) {
         <input value={cmd} onChange={(e) => setCmd(e.target.value)} onKeyDown={(e) => e.key === "Enter" && run()}
           placeholder={t("execHint", lang)}
           className="flex-1 rounded border border-zinc-700 bg-zinc-950 px-2 py-1 text-xs font-mono" />
-        <button onClick={run} disabled={busy} className="rounded bg-[#183661] px-3 py-1 text-xs text-white disabled:opacity-50">
+        <button onClick={run} disabled={busy} className="rounded bg-[#09637E] px-3 py-1 text-xs text-white disabled:opacity-50">
           {t("run", lang)}
         </button>
       </div>
@@ -239,7 +240,7 @@ function ExecPanel({ id }: { id: string }) {
   );
 }
 
-function ContainerRow({ c, canAct, onAction, onLogs }: { c: Container; canAct: boolean; onAction: (id: string, action: string) => void; onLogs: (c: Container) => void }) {
+function ContainerRow({ c, canAct, onAction, onLogs, onRemove }: { c: Container; canAct: boolean; onAction: (id: string, action: string) => void; onLogs: (c: Container) => void; onRemove: (c: Container) => void }) {
   const { lang } = useUI();
   const [open, setOpen] = useState(false);
   return (
@@ -280,7 +281,7 @@ function ContainerRow({ c, canAct, onAction, onLogs }: { c: Container; canAct: b
                 <button onClick={() => onAction(c.id, "pull")} className="rounded border border-zinc-600 text-zinc-300 px-2 py-1 text-xs">{t("actionPull", lang)}</button>
                 <button onClick={() => onAction(c.id, "recreate")} className="rounded border border-sky-700/50 text-sky-400 px-2 py-1 text-xs">{t("actionRecreate", lang)}</button>
                 <button
-                  onClick={() => { if (window.confirm(t("confirmRemove", lang))) onAction(c.id, "remove"); }}
+                  onClick={() => onRemove(c)}
                   className="rounded border border-red-900/50 text-red-500 px-2 py-1 text-xs"
                 >{t("actionRemove", lang)}</button>
               </>
@@ -397,7 +398,7 @@ function ImagesTab({ canAct, lang }: { canAct: boolean; lang: any }) {
           <input value={pullInput} onChange={(e) => setPullInput(e.target.value)} onKeyDown={(e) => e.key === "Enter" && pull()}
             placeholder={t("imagePullPlaceholder", lang)}
             className="flex-1 rounded border border-zinc-700 bg-zinc-900 px-3 py-1.5 text-sm" />
-          <button onClick={pull} disabled={pulling} className="rounded bg-[#183661] px-4 py-1.5 text-sm text-white disabled:opacity-50">
+          <button onClick={pull} disabled={pulling} className="rounded bg-[#09637E] px-4 py-1.5 text-sm text-white disabled:opacity-50">
             {t("imagePull", lang)}
           </button>
         </div>
@@ -547,6 +548,8 @@ export default function Page() {
   const [tab, setTab] = useState<Tab>("containers");
   const [view, setView] = useState<"grouped" | "flat">("grouped");
   const [logTarget, setLogTarget] = useState<Container | null>(null);
+  const [confirmRemove, setConfirmRemove] = useState<Container | null>(null);
+  const [confirmPrune, setConfirmPrune] = useState(false);
 
   const { data: me } = useSWR("/api/auth/me", fetcher);
   const canAct = me && ["ADMIN", "ENGINEER"].includes(me.role);
@@ -561,7 +564,6 @@ export default function Page() {
   };
 
   const onPrune = async () => {
-    if (!window.confirm(t("confirmPrune", lang))) return;
     try { await fetch("/api/containers/prune", { method: "POST" }); }
     finally { mutate(); }
   };
@@ -583,7 +585,7 @@ export default function Page() {
   );
 
   const renderRows = (cs: Container[]) =>
-    cs.map((c) => <ContainerRow key={c.id} c={c} canAct={!!canAct} onAction={onAction} onLogs={setLogTarget} />);
+    cs.map((c) => <ContainerRow key={c.id} c={c} canAct={!!canAct} onAction={onAction} onLogs={setLogTarget} onRemove={setConfirmRemove} />);
 
   const allFlat = data ? [...data.projects.flatMap((p) => p.services.flatMap((s) => s.containers)), ...data.ungrouped] : [];
 
@@ -596,6 +598,24 @@ export default function Page() {
 
   return (
     <div>
+      <ConfirmDialog
+        open={!!confirmRemove}
+        title={`Remove container "${confirmRemove?.name}"?`}
+        message="This will permanently remove the container. The image is kept. This cannot be undone."
+        confirmWord={confirmRemove?.name ?? ""}
+        confirmLabel="Remove"
+        onConfirm={() => { if (confirmRemove) { onAction(confirmRemove.id, "remove"); setConfirmRemove(null); } }}
+        onCancel={() => setConfirmRemove(null)}
+      />
+      <ConfirmDialog
+        open={confirmPrune}
+        title="Prune stopped containers?"
+        message="All stopped containers will be permanently removed. Running containers are not affected."
+        confirmWord="prune"
+        confirmLabel="Prune"
+        onConfirm={() => { setConfirmPrune(false); onPrune(); }}
+        onCancel={() => setConfirmPrune(false)}
+      />
       <PageHeader title={t("containerMonitoring", lang)} desc={t("containerMonitoringDesc", lang)} />
 
       {/* Tab bar */}
@@ -613,16 +633,16 @@ export default function Page() {
         <>
           <div className="flex flex-wrap items-center gap-2 px-6 pt-4">
             <button onClick={() => setView("grouped")}
-              className={`rounded px-3 py-1 text-xs ${view === "grouped" ? "bg-[#183661] text-white" : "border border-zinc-700"}`}>
+              className={`rounded px-3 py-1 text-xs ${view === "grouped" ? "bg-[#09637E] text-white" : "border border-zinc-700"}`}>
               {t("groupedView", lang)}
             </button>
             <button onClick={() => setView("flat")}
-              className={`rounded px-3 py-1 text-xs ${view === "flat" ? "bg-[#183661] text-white" : "border border-zinc-700"}`}>
+              className={`rounded px-3 py-1 text-xs ${view === "flat" ? "bg-[#09637E] text-white" : "border border-zinc-700"}`}>
               {t("flatView", lang)}
             </button>
             <button onClick={() => mutate()} className="rounded border border-zinc-700 px-3 py-1 text-xs">{t("refresh", lang)}</button>
             {canAct && (
-              <button onClick={onPrune} className="rounded border border-red-900/40 text-red-500 px-3 py-1 text-xs">
+              <button onClick={() => setConfirmPrune(true)} className="rounded border border-red-900/40 text-red-500 px-3 py-1 text-xs">
                 {t("pruneContainers", lang)}
               </button>
             )}

@@ -57,6 +57,11 @@ interface ScoreComponent {
   note: string | null;
   detail: string | null;
 }
+interface ScoreBreakdownItem {
+  label: string;
+  points: number;
+  detail: string;
+}
 interface Alert {
   id: string;
   severity: "critical" | "warning" | "info";
@@ -84,6 +89,8 @@ interface OverviewData {
   score: number | null;
   band: "green" | "amber" | "red" | "unknown";
   breakdown: ScoreComponent[];
+  scoreBreakdown: ScoreBreakdownItem[];
+  deployStatus: "ALLOWED" | "BLOCKED" | "WARNED";
   unavailableComponents: string[];
   partial: boolean;
   gate: DeployGate;
@@ -219,6 +226,13 @@ function Section({
   );
 }
 
+function scoreColor(score: number | null): string {
+  if (score == null) return BAND_COLOR.unknown;
+  if (score >= 80) return "#10b981";
+  if (score >= 60) return "#f59e0b";
+  return "#ef4444";
+}
+
 function Gauge({
   score,
   band,
@@ -228,7 +242,7 @@ function Gauge({
   band: string;
   lang: Lang;
 }) {
-  const color = BAND_COLOR[band] || BAND_COLOR.unknown;
+  const color = scoreColor(score);
   const pct = score == null ? 0 : Math.max(0, Math.min(100, score));
   const r = 52;
   const c = 2 * Math.PI * r;
@@ -357,6 +371,70 @@ const QUICK_ICON: Record<string, React.ReactNode> = {
   integrations: <Plug size={16} />,
 };
 
+function DeployBanner({
+  deployStatus,
+  gate,
+  lang,
+}: {
+  deployStatus: "ALLOWED" | "BLOCKED" | "WARNED";
+  gate: DeployGate;
+  lang: Lang;
+}) {
+  const isBlocked = deployStatus === "BLOCKED";
+  const isWarned  = deployStatus === "WARNED";
+  const accentColor = isBlocked ? "#ef4444" : isWarned ? "#f59e0b" : "#10b981";
+  const bgColor     = isBlocked ? "rgba(239,68,68,0.10)" : isWarned ? "rgba(245,158,11,0.10)" : "rgba(16,185,129,0.10)";
+  const textColor   = isBlocked ? "#fca5a5" : isWarned ? "#fcd34d" : "#6ee7b7";
+  const bannerLabel = isBlocked
+    ? "🚫 Deploy BLOCKED"
+    : isWarned
+    ? "⚠️ Deploy allowed with warnings"
+    : "✅ Deploy ALLOWED";
+  const Icon = isBlocked ? AlertTriangle : isWarned ? AlertTriangle : Activity;
+
+  // Merge gate reasons (alerts) as the reason list
+  const reasons = gate.reasons;
+
+  return (
+    <div
+      className="mx-6 mt-6 rounded-xl px-5 py-4"
+      style={{
+        background: bgColor,
+        border: `1.5px solid ${accentColor}`,
+        borderLeft: `5px solid ${accentColor}`,
+      }}
+    >
+      <div className="flex items-center gap-2 font-bold text-base" style={{ color: textColor }}>
+        <Icon size={17} />
+        {bannerLabel}
+        {reasons.length > 0 && (
+          <Link
+            href="/alerts"
+            className="ml-auto text-xs font-normal opacity-60 hover:opacity-100 transition-opacity"
+            style={{ color: textColor }}
+          >
+            {t("ovDeployGateReasons", lang)} {reasons.length}
+          </Link>
+        )}
+      </div>
+      {reasons.length > 0 && (
+        <ul className="mt-2.5 space-y-1 text-xs" style={{ color: textColor, opacity: 0.82 }}>
+          {reasons.slice(0, 5).map((r, i) => (
+            <li key={i} className="flex items-start gap-1.5">
+              <span className="shrink-0 mt-0.5">•</span>
+              <span>{r}</span>
+            </li>
+          ))}
+          {reasons.length > 5 && (
+            <li style={{ opacity: 0.55 }}>+{reasons.length - 5} more…</li>
+          )}
+        </ul>
+      )}
+    </div>
+  );
+}
+
+/** Legacy gate section — kept for fallback when deployStatus is not yet available */
 function DeployGateSection({ gate, lang }: { gate: DeployGate; lang: Lang }) {
   const isBlocked = gate.status === "blocked";
   const isWarning = gate.status === "warning";
@@ -676,7 +754,11 @@ export default function Home() {
       {data && (
         <>
           {/* Deploy readiness gate */}
-          <DeployGateSection gate={data.gate} lang={L} />
+          {data.deployStatus ? (
+            <DeployBanner deployStatus={data.deployStatus} gate={data.gate} lang={L} />
+          ) : (
+            <DeployGateSection gate={data.gate} lang={L} />
+          )}
 
           {/* Readiness + quick stats */}
           <Section
@@ -719,7 +801,46 @@ export default function Home() {
               </div>
             </div>
 
-            {/* Breakdown — always visible */}
+            {/* Score deduction breakdown */}
+            {data.scoreBreakdown && data.scoreBreakdown.length > 0 && (
+              <div
+                className="mt-4 pt-4"
+                style={{ borderTop: "1px solid var(--border)" }}
+              >
+                <p className="mb-2 text-xs font-semibold uppercase tracking-wide" style={{ color: "var(--text-muted)" }}>
+                  Score breakdown
+                </p>
+                <ul className="space-y-1">
+                  {data.scoreBreakdown.map((item, i) => {
+                    const isDeduction = item.points < 0;
+                    const pointColor = isDeduction ? "#ef4444" : "#71717a";
+                    return (
+                      <li
+                        key={i}
+                        className="flex items-center justify-between gap-3 rounded-lg px-3 py-2 text-xs"
+                        style={{
+                          background: isDeduction ? "rgba(239,68,68,0.05)" : "var(--bg-card)",
+                          border: `1px solid ${isDeduction ? "rgba(239,68,68,0.20)" : "var(--border)"}`,
+                        }}
+                      >
+                        <span style={{ color: "var(--text-secondary)" }}>{item.label}</span>
+                        <span className="flex items-center gap-2 shrink-0">
+                          <span style={{ color: "var(--text-muted)" }}>{item.detail}</span>
+                          <span
+                            className="font-semibold tabular-nums w-14 text-right"
+                            style={{ color: pointColor }}
+                          >
+                            {item.points === 0 ? "—" : `${item.points > 0 ? "+" : ""}${item.points} pts`}
+                          </span>
+                        </span>
+                      </li>
+                    );
+                  })}
+                </ul>
+              </div>
+            )}
+
+            {/* Component breakdown — always visible */}
             <div
               className="mt-4 grid gap-1.5 pt-4 sm:grid-cols-2"
               style={{ borderTop: "1px solid var(--border)" }}

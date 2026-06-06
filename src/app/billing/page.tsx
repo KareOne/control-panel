@@ -21,11 +21,11 @@ const card =
 const inp =
   "rounded border border-zinc-300 dark:border-zinc-700 bg-transparent px-2 py-1 text-sm";
 const btn =
-  "rounded bg-[#183661] text-white px-3 py-1 text-sm hover:bg-[#1e478e] disabled:opacity-50";
+  "rounded bg-[#09637E] text-white px-3 py-1 text-sm hover:bg-[#088395] disabled:opacity-50";
 const tabBtn = (active: boolean) =>
   `px-3 py-1.5 text-sm rounded ${
     active
-      ? "bg-[#183661] text-white"
+      ? "bg-[#09637E] text-white"
       : "hover:bg-zinc-100 dark:hover:bg-zinc-800"
   }`;
 
@@ -105,7 +105,6 @@ function Dashboard({ lang }: { lang: any }) {
   );
   const { data: budgets } = useSWR("/api/billing/budgets", fetcher);
   const { data: top } = useSWR("/api/billing/top?limit=8", fetcher);
-  const { data: anom } = useSWR("/api/billing/anomalies", fetcher);
 
   const providers = useMemo(() => {
     const set = new Set<string>(["openrouter"]);
@@ -222,35 +221,7 @@ function Dashboard({ lang }: { lang: any }) {
             </div>
           )}
         </div>
-        <div className={card}>
-          <h3 className="font-semibold text-sm mb-3">
-            {t("blAnomalies", lang)}
-          </h3>
-          {!anom?.anomalies?.length ? (
-            <p className="text-sm text-zinc-500">
-              {t("blNoAnomalies", lang)}
-            </p>
-          ) : (
-            <table className="w-full text-sm">
-              <tbody>
-                {anom.anomalies.map((a: any) => (
-                  <tr
-                    key={a.date}
-                    className="border-t border-zinc-100 dark:border-zinc-800"
-                  >
-                    <td className="py-1">{a.date}</td>
-                    <td className="text-end text-amber-600">
-                      {usd(a.cost)}
-                    </td>
-                    <td className="text-end text-zinc-500">
-                      &gt; {usd(a.threshold)}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          )}
-        </div>
+        <AnomaliesCard lang={lang} />
       </div>
 
       <Drilldown lang={lang} />
@@ -323,7 +294,7 @@ function BudgetBar({ b, lang }: { b: any; lang: any }) {
       ? "bg-red-600"
       : b.pct >= 80
       ? "bg-amber-500"
-      : "bg-[#183661]";
+      : "bg-[#09637E]";
   return (
     <div>
       <div className="flex justify-between text-sm mb-1">
@@ -631,6 +602,7 @@ function Manage({ lang }: { lang: any }) {
     <div className="space-y-6">
       <PricingManager lang={lang} />
       <BudgetManager lang={lang} />
+      <ModuleBudgetManager lang={lang} />
       <CredentialManager lang={lang} />
       <ConfigManager lang={lang} />
     </div>
@@ -971,6 +943,153 @@ function ConfigManager({ lang }: { lang: any }) {
           {t("blSaved", lang).replace(".", "")}
         </button>
       </div>
+    </div>
+  );
+}
+
+/* ─────────────── Enhanced Anomalies Card ─────────────── */
+
+function AnomaliesCard({ lang }: { lang: any }) {
+  const [groupBy, setGroupBy] = useState<"" | "module" | "provider" | "model">("");
+  const key = groupBy
+    ? `/api/billing/anomalies?groupBy=${groupBy}`
+    : "/api/billing/anomalies";
+  const { data } = useSWR(key, fetcher);
+
+  return (
+    <div className={card}>
+      <div className="flex items-center justify-between mb-3 gap-2">
+        <h3 className="font-semibold text-sm">{t("blAnomalies", lang)}</h3>
+        <select
+          className={inp}
+          value={groupBy}
+          onChange={(e) => setGroupBy(e.target.value as any)}
+        >
+          <option value="">{t("blAnomalyGroupBy", lang)}: overall</option>
+          <option value="module">module</option>
+          <option value="provider">provider</option>
+          <option value="model">model</option>
+        </select>
+      </div>
+
+      {!groupBy ? (
+        !data?.anomalies?.length ? (
+          <p className="text-sm text-zinc-500">{t("blNoAnomalies", lang)}</p>
+        ) : (
+          <table className="w-full text-sm">
+            <tbody>
+              {data.anomalies.map((a: any) => (
+                <tr key={a.date} className="border-t border-zinc-100 dark:border-zinc-800">
+                  <td className="py-1">{a.date}</td>
+                  <td className="text-end text-amber-600">{usd(a.cost)}</td>
+                  <td className="text-end text-zinc-500">&gt; {usd(a.threshold)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )
+      ) : !data?.byDimension?.length ? (
+        <p className="text-sm text-zinc-500">{t("blNoAnomalies", lang)}</p>
+      ) : (
+        <div className="space-y-3">
+          {data.byDimension.map((d: any) => (
+            <div key={d.dimension}>
+              <div className="text-xs font-medium text-zinc-400 mb-1">{d.dimension}</div>
+              {d.anomalies.map((a: any) => (
+                <div key={a.date} className="flex justify-between text-sm border-t border-zinc-100 dark:border-zinc-800 py-0.5">
+                  <span className="text-zinc-500">{a.date}</span>
+                  <span className="text-amber-600">{usd(a.cost)}</span>
+                  <span className="text-zinc-500">&gt; {usd(a.threshold)}</span>
+                </div>
+              ))}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ─────────────── Module Budget Manager ─────────────── */
+
+function ModuleBudgetManager({ lang }: { lang: any }) {
+  const { data, mutate: reload } = useSWR("/api/billing/module-budgets", fetcher);
+  const [form, setForm] = useState({ module: "", period: "daily", limitAmount: "10" });
+  const [busy, setBusy] = useState(false);
+
+  const save = async () => {
+    if (!form.module || !form.limitAmount) return;
+    setBusy(true);
+    await fetch("/api/billing/module-budgets", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ ...form, limitAmount: Number(form.limitAmount) }),
+    });
+    setBusy(false);
+    reload();
+  };
+
+  const del = async (id: string) => {
+    await fetch(`/api/billing/module-budgets/${id}`, { method: "DELETE" });
+    reload();
+  };
+
+  const budgets: any[] = data?.budgets ?? [];
+
+  return (
+    <div className={card}>
+      <h3 className="font-semibold text-sm mb-1">{t("blModuleBudgets", lang)}</h3>
+      <p className="text-xs text-zinc-500 mb-3">{t("blModuleBudgetsDesc", lang)}</p>
+      <div className="flex gap-2 flex-wrap mb-4">
+        <input
+          className={inp}
+          placeholder="module"
+          value={form.module}
+          onChange={(e) => setForm({ ...form, module: e.target.value })}
+        />
+        <select className={inp} value={form.period} onChange={(e) => setForm({ ...form, period: e.target.value })}>
+          <option value="daily">daily</option>
+          <option value="weekly">weekly</option>
+          <option value="monthly">monthly</option>
+        </select>
+        <input
+          className={inp}
+          type="number"
+          placeholder="limit $"
+          value={form.limitAmount}
+          onChange={(e) => setForm({ ...form, limitAmount: e.target.value })}
+        />
+        <button className={btn} disabled={busy} onClick={save}>
+          {t("blAddModuleBudget", lang)}
+        </button>
+      </div>
+      {budgets.length === 0 ? (
+        <p className="text-sm text-zinc-500">{t("blNone", lang)}</p>
+      ) : (
+        <div className="space-y-2">
+          {budgets.map((b: any) => {
+            const pct = Math.min(100, b.pct);
+            const color = b.pct >= 100 ? "bg-red-600" : b.pct >= 80 ? "bg-amber-500" : "bg-[#09637E]";
+            return (
+              <div key={b.id}>
+                <div className="flex justify-between text-sm mb-1">
+                  <span>{b.module} · {b.period}</span>
+                  <div className="flex items-center gap-3">
+                    <span>
+                      {usd(b.spend)} / {usd(b.limitAmount)} ({b.pct}%)
+                      {b.breached && <span className="ml-2 text-red-600">{t("blBudgetBreached", lang)}</span>}
+                    </span>
+                    <button className="text-zinc-500 hover:text-red-400 text-xs" onClick={() => del(b.id)}>✕</button>
+                  </div>
+                </div>
+                <div className="relative h-2 rounded bg-zinc-200 dark:bg-zinc-800 overflow-hidden">
+                  <div className={`h-full ${color}`} style={{ width: `${pct}%` }} />
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 }

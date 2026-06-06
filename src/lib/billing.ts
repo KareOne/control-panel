@@ -1385,6 +1385,7 @@ export interface Anomaly {
   mean: number;
   std: number;
   threshold: number;
+  dimension?: string; // set when groupBy is used
 }
 
 /** Days where cost > mean + 2σ of the trailing 14 days. */
@@ -1411,4 +1412,76 @@ export async function anomalies(): Promise<Anomaly[]> {
     }
   }
   return out;
+}
+
+/**
+ * Detect anomalous spikes per-dimension (module/provider/model) over the
+ * last 45 days. Returns the top spike per dimension where spend > mean+2σ.
+ */
+export async function anomaliesByDimension(
+  groupBy: "module" | "provider" | "model"
+): Promise<{ dimension: string; anomalies: Anomaly[] }[]> {
+  const since = new Date(Date.now() - 45 * 86400_000);
+
+  const events = await prisma.billingEvent.findMany({
+    where: { requestAt: { gte: since }, isFreeTier: false },
+    select: {
+      requestAt: true,
+      totalCost: true,
+      module: true,
+      provider: true,
+      model: true,
+    },
+    orderBy: { requestAt: "asc" },
+  });
+
+  // Group events by dimension value then by date
+  const byDim = new Map<string, Map<string, number>>();
+  for (const e of events) {
+    const dim =
+      groupBy === "module"
+        ? e.module
+        : groupBy === "provider"
+        ? e.provider
+        : (e.model ?? "unknown");
+    const day = e.requestAt.toISOString().slice(0, 10);
+    const m = byDim.get(dim) ?? new Map<string, number>();
+    m.set(day, (m.get(day) ?? 0) + e.totalCost);
+    byDim.set(dim, m);
+  }
+
+  const result: { dimension: string; anomalies: Anomaly[] }[] = [];
+  for (const [dimension, dayMap] of Array.from(byDim.entries())) {
+    const days = Array.from(dayMap.entries())
+      .sort(([a], [b]) => (a < b ? -1 : 1))
+      .map(([date, cost]) => ({ date, cost }));
+
+    const spikes: Anomaly[] = [];
+    for (let i = 0; i < days.length; i++) {
+      const win = days.slice(Math.max(0, i - 14), i);
+      if (win.length < 3) continue;
+      const costs = win.map((w) => w.cost);
+      const mean = costs.reduce((s, c) => s + c, 0) / costs.length;
+      const variance =
+        costs.reduce((s, c) => s + (c - mean) ** 2, 0) / costs.length;
+      const std = Math.sqrt(variance);
+      const threshold = mean + 2 * std;
+      if (days[i].cost > threshold && days[i].cost > 0) {
+        spikes.push({
+          date: days[i].date,
+          cost: days[i].cost,
+          mean: round6(mean),
+          std: round6(std),
+          threshold: round6(threshold),
+          dimension,
+        });
+      }
+    }
+    if (spikes.length > 0) result.push({ dimension, anomalies: spikes });
+  }
+  return result.sort(
+    (a, b) =>
+      Math.max(...b.anomalies.map((x) => x.cost)) -
+      Math.max(...a.anomalies.map((x) => x.cost))
+  );
 }

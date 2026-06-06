@@ -186,7 +186,7 @@ function ProposalCard({
         <div className="mt-3 flex gap-2">
           <button
             onClick={() => onDecide(p.id, "accept")}
-            className="rounded bg-[#183661] text-white text-xs px-3 py-1.5 hover:bg-emerald-700"
+            className="rounded bg-[#09637E] text-white text-xs px-3 py-1.5 hover:bg-[#088395]"
           >
             {t("discAccept", lang)}
           </button>
@@ -334,7 +334,7 @@ export default function Page() {
             <button
               onClick={runScan}
               disabled={running}
-              className="rounded bg-[#183661] text-white text-sm px-4 py-2 hover:bg-[#1e478e] disabled:opacity-50"
+              className="rounded bg-[#09637E] text-white text-sm px-4 py-2 hover:bg-[#088395] disabled:opacity-50"
             >
               {running ? t("discRunning", lang) : t("discRun", lang)}
             </button>
@@ -507,7 +507,7 @@ export default function Page() {
             </div>
             <button
               onClick={saveCfg}
-              className="mt-3 rounded bg-[#183661] text-white text-sm px-4 py-2 hover:bg-emerald-700"
+              className="mt-3 rounded bg-[#09637E] text-white text-sm px-4 py-2 hover:bg-[#088395]"
             >
               {savedFlag ? t("discSaved", lang) : t("discSave", lang)}
             </button>

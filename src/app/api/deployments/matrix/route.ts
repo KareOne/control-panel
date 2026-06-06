@@ -16,6 +16,7 @@ export const GET = handler(async (req: NextRequest) => {
       orderBy: { deployedAt: "desc" },
       include: { deployedBy: { select: { id: true, name: true } } },
     });
+    const total = await prisma.deployment.count({ where: { environment: env } });
     rows.push({
       environment: env,
       deployed: !!active,
@@ -25,6 +26,14 @@ export const GET = handler(async (req: NextRequest) => {
       deployedBy: active?.deployedBy?.name ?? null,
       deployedAt: active?.deployedAt ?? null,
       rollbackOfId: active?.rollbackOfId ?? null,
+      logUrl: active?.logUrl ?? null,
+      durationMs: active?.durationMs ?? null,
+      status: !active
+        ? "empty"
+        : active.rollbackOfId
+        ? "rolled-back"
+        : "active",
+      totalDeployments: total,
     });
   }
   return json(rows);

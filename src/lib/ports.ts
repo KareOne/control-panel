@@ -5,6 +5,7 @@ import { prisma } from "./prisma";
 import { createJob, runJob } from "./jobs";
 import { listContainers } from "./docker";
 import { decryptSecret } from "./crypto";
+import { hostExec } from "./server";
 
 /**
  * Section 15 — Port Allocation Map.
@@ -221,6 +222,19 @@ const NETSTAT_TCP = "netstat -tlnp 2>/dev/null";
 const NETSTAT_UDP = "netstat -ulnp 2>/dev/null";
 
 async function tryExecLocal(cmd: string): Promise<string | null> {
+  // Prefer the host namespace (the panel runs in a container that does not
+  // ship ss/netstat and whose own netns only sees container-local sockets).
+  // nsenter -t 1 puts us in the host's mount + network namespace so we see the
+  // real host listeners. Fall back to in-container exec for non-containerized
+  // / local-dev runs where nsenter is unavailable.
+  try {
+    const { stdout } = await hostExec(cmd, 15000);
+    if (stdout && stdout.trim()) return stdout;
+  } catch (e: any) {
+    if (e && typeof e.stdout === "string" && e.stdout.trim().length > 0)
+      return e.stdout;
+    // fall through to plain exec
+  }
   try {
     const { stdout } = await execAsync(cmd, { timeout: 15000 });
     return stdout;

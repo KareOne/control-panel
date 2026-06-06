@@ -8,6 +8,8 @@ import { diff as gitDiff, getRepo, GitNotConfiguredError, log as gitLog, current
 import { createJob, runJob } from "./jobs";
 import { raiseAlert } from "./alerts";
 import { ensureManagedProxy, getManagedProxy } from "./proxy";
+import { checkQualityGate } from "./qualitygates";
+import { startHealthWatch, DEFAULT_HEALTH_WATCH } from "./healthwatch";
 
 /**
  * Section 16 — Zero-Downtime Deploy (Git -> Production).
@@ -38,6 +40,8 @@ export interface DeployConfig {
   containerPort: number;
   /** vault password (encrypted via crypto.ts) for ansible-vault, optional. */
   vaultPasswordEnc?: string;
+  /** Automatically roll back when post-deploy health monitoring detects degradation. */
+  autoRollback: boolean;
 }
 
 export const DEPLOY_SETTING_KEY = "deploy";
@@ -53,6 +57,7 @@ const DEFAULT_CONFIG: DeployConfig = {
   ansiblePlaybookDir: path.join(process.cwd(), "ansible", "playbooks", "deploy"),
   repoPathPerEnv: {},
   containerPort: 8000,
+  autoRollback: false,
 };
 
 export async function getDeployConfig(): Promise<DeployConfig> {
@@ -471,6 +476,15 @@ export async function runDeploy(
   if (plan.refuseReasons.length) {
     throw new DeployRefusedError(plan.refuseReasons);
   }
+
+  // Quality gate check — runs after plan so we have the resolved SHA.
+  const gate = await checkQualityGate(env, resolved);
+  if (!gate.allowed) {
+    throw new DeployRefusedError(
+      gate.reasons.map((r) => `[Quality Gate] ${r}`)
+    );
+  }
+
   const destructive = plan.migrations.filter((m) => m.destructive);
   if (destructive.length && !(opts.approveDestructive && opts.maintenanceWindow)) {
     throw new DeployRefusedError([
@@ -505,6 +519,15 @@ export async function runDeploy(
 
   runJob(job.id, async (ctx) => {
     const log = ctx.log;
+
+    const activeRun = await prisma.deployRun.findFirst({
+      where: { environment: env as any, state: "RUNNING", id: { not: run.id } },
+    });
+    if (activeRun) {
+      await prisma.deployRun.update({ where: { id: run.id }, data: { state: "FAILED" } });
+      throw new Error(`Deploy locked: run ${activeRun.id} is already RUNNING for ${env}. Wait for it to finish or cancel it first.`);
+    }
+
     const blueName = opts.blueName ?? nameFor(env, service, "blue");
     const greenName = nameFor(env, service, "green");
     let greenStarted = false;
@@ -679,6 +702,19 @@ export async function runDeploy(
         payload: { deployRunId: run.id, env, commitSha: resolved, deploymentId: deployment.id },
       });
       await log(`Deploy SUCCEEDED. Deployment ${deployment.id} recorded.`);
+
+      // Kick off background post-deploy health watch (non-blocking).
+      const onDegrade = cfg.autoRollback
+        ? () => rollback(run.id, null).then(() => {})
+        : undefined;
+      startHealthWatch(
+        run.id,
+        greenPort,
+        { ...DEFAULT_HEALTH_WATCH, healthPath: cfg.healthPath },
+        log,
+        onDegrade
+      );
+
       await ctx.progress(100);
       return { deployRunId: run.id, deploymentId: deployment.id };
     } catch (e) {

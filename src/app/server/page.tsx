@@ -70,7 +70,7 @@ function TextInput({
       value={value}
       onChange={(e) => onChange(e.target.value)}
       placeholder={placeholder}
-      className={`w-full rounded border border-zinc-700 bg-zinc-950 px-2 py-1.5 text-sm text-zinc-200 placeholder:text-zinc-600 focus:border-[#183661] focus:outline-none ${className}`}
+      className={`w-full rounded border border-zinc-700 bg-zinc-950 px-2 py-1.5 text-sm text-zinc-200 placeholder:text-zinc-600 focus:border-[#09637E] focus:outline-none ${className}`}
     />
   );
 }
@@ -88,7 +88,7 @@ function Btn({
 }) {
   const cls =
     variant === "primary"
-      ? "bg-[#183661] text-white hover:bg-[#1e478e]"
+      ? "bg-[#09637E] text-white hover:bg-[#088395]"
       : variant === "danger"
       ? "border border-red-700/50 text-red-400 hover:border-red-600"
       : variant === "warning"
@@ -348,7 +348,7 @@ function DockerDaemonSection({ lang }: { lang: "en" | "fa" }) {
               onChange={(e) => setJsonText(e.target.value)}
               rows={10}
               dir="ltr"
-              className="w-full rounded border border-zinc-700 bg-zinc-950 px-3 py-2 font-mono text-xs text-zinc-300 focus:border-[#183661] focus:outline-none"
+              className="w-full rounded border border-zinc-700 bg-zinc-950 px-3 py-2 font-mono text-xs text-zinc-300 focus:border-[#09637E] focus:outline-none"
             />
           )}
         </Field>
@@ -872,7 +872,7 @@ function FirewallSection({ lang }: { lang: "en" | "fa" }) {
               <select
                 value={addProto}
                 onChange={(e) => setAddProto(e.target.value as "tcp" | "udp" | "any")}
-                className="rounded border border-zinc-700 bg-zinc-950 px-2 py-1.5 text-sm text-zinc-200 focus:border-[#183661] focus:outline-none"
+                className="rounded border border-zinc-700 bg-zinc-950 px-2 py-1.5 text-sm text-zinc-200 focus:border-[#09637E] focus:outline-none"
               >
                 <option value="tcp">tcp</option>
                 <option value="udp">udp</option>
@@ -1322,7 +1322,7 @@ function NetworkSection({ lang }: { lang: "en" | "fa" }) {
               <select
                 value={diagTool}
                 onChange={(e) => setDiagTool(e.target.value)}
-                className="rounded border border-zinc-700 bg-zinc-950 px-2 py-1.5 text-sm text-zinc-200 focus:border-[#183661] focus:outline-none"
+                className="rounded border border-zinc-700 bg-zinc-950 px-2 py-1.5 text-sm text-zinc-200 focus:border-[#09637E] focus:outline-none"
               >
                 <option value="ping">ping</option>
                 <option value="curl">curl</option>
@@ -2153,6 +2153,85 @@ function TimeSection({ lang }: { lang: "en" | "fa" }) {
   );
 }
 
+// ─── Security Baseline ───────────────────────────────────────────
+
+type BaselineCheck = {
+  id: string;
+  label: string;
+  status: "pass" | "fail" | "warn" | "unknown";
+  detail: string;
+};
+
+type BaselineData = {
+  checks: BaselineCheck[];
+  checkedAt: string;
+};
+
+const STATUS_STYLES: Record<BaselineCheck["status"], { bg: string; text: string; label: string }> = {
+  pass:    { bg: "bg-emerald-950/50 border-emerald-700/40", text: "text-emerald-400", label: "Pass" },
+  fail:    { bg: "bg-red-950/50 border-red-700/40",         text: "text-red-400",     label: "Fail" },
+  warn:    { bg: "bg-amber-950/50 border-amber-700/40",     text: "text-amber-400",   label: "Warn" },
+  unknown: { bg: "bg-zinc-800/50 border-zinc-700/40",       text: "text-zinc-400",    label: "?"    },
+};
+
+function SecurityBaseline() {
+  const { data, isLoading, mutate } = useSWR<BaselineData>(
+    "/api/server/security-baseline",
+    fetcher,
+    { refreshInterval: 60000 }
+  );
+
+  const checks = data?.checks ?? [];
+  const passing = checks.filter((c) => c.status === "pass").length;
+  const total = checks.length || 7;
+
+  return (
+    <Card>
+      <CardHeader
+        title="Security Baseline"
+        desc="Automated checks for common host security settings"
+        badge={
+          !isLoading && data ? (
+            <span className="rounded border border-zinc-700 bg-zinc-800 px-2 py-0.5 text-xs text-zinc-300">
+              {passing}/{total} passing
+            </span>
+          ) : undefined
+        }
+      />
+      <div className="p-5 space-y-3">
+        {isLoading && <p className="text-xs text-zinc-500">Running checks…</p>}
+        {!isLoading && checks.length === 0 && <p className="text-xs text-zinc-500">No data</p>}
+        {!isLoading && checks.length > 0 && (
+          <div className="grid gap-2">
+            {checks.map((check) => {
+              const s = STATUS_STYLES[check.status];
+              return (
+                <div key={check.id} className={`flex items-start gap-3 rounded border px-3 py-2 ${s.bg}`}>
+                  <span className={`mt-0.5 shrink-0 rounded border px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${s.text} border-current`}>
+                    {s.label}
+                  </span>
+                  <div className="min-w-0 flex-1">
+                    <div className="text-sm font-medium text-zinc-200">{check.label}</div>
+                    <div className="text-xs text-zinc-400 mt-0.5">{check.detail}</div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+        <div className="flex items-center justify-between pt-1">
+          {data?.checkedAt && (
+            <span className="text-[11px] text-zinc-600">
+              Last checked: {new Date(data.checkedAt).toLocaleTimeString()}
+            </span>
+          )}
+          <Btn onClick={() => mutate()} disabled={isLoading} variant="default">Re-check</Btn>
+        </div>
+      </div>
+    </Card>
+  );
+}
+
 // ─── Main Page ────────────────────────────────────────────────────
 export default function ServerPage() {
   const { lang } = useUI();
@@ -2171,6 +2250,7 @@ export default function ServerPage() {
         <OSSection lang={lang} />
         <ResourcesSection lang={lang} />
         <TimeSection lang={lang} />
+        <SecurityBaseline />
       </div>
     </div>
   );

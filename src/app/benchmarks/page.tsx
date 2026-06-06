@@ -212,7 +212,7 @@ export default function Page() {
               onClick={() => setTab(tb.key)}
               className={`inline-flex items-center gap-2 rounded px-3 py-1.5 text-sm border ${
                 tab === tb.key
-                  ? "bg-[#183661] text-white border-[#183661]"
+                  ? "bg-[#09637E] text-white border-[#09637E]"
                   : "border-zinc-300 dark:border-zinc-700 hover:bg-zinc-100 dark:hover:bg-zinc-800"
               }`}
             >
@@ -237,7 +237,7 @@ export default function Page() {
                   await post("/api/benchmarks/code/analyze");
                   mutCode();
                 }}
-                className="inline-flex items-center gap-2 rounded bg-[#183661] text-white px-3 py-1.5 text-sm disabled:opacity-50"
+                className="inline-flex items-center gap-2 rounded bg-[#09637E] text-white px-3 py-1.5 text-sm disabled:opacity-50"
               >
                 <Play size={14} />
                 {busy === "/api/benchmarks/code/analyze"
@@ -422,7 +422,7 @@ export default function Page() {
                 await post("/api/benchmarks/api/run", { n: 20 });
                 mutApi();
               }}
-              className="inline-flex items-center gap-2 rounded bg-[#183661] text-white px-3 py-1.5 text-sm disabled:opacity-50"
+              className="inline-flex items-center gap-2 rounded bg-[#09637E] text-white px-3 py-1.5 text-sm disabled:opacity-50"
             >
               <Play size={14} />
               {busy === "/api/benchmarks/api/run"
@@ -795,7 +795,7 @@ function ConfigEditor({
             endpoints: endpoints.filter((e) => e.name && e.url),
           })
         }
-        className="rounded bg-[#183661] text-white px-4 py-2"
+        className="rounded bg-[#09637E] text-white px-4 py-2"
       >
         {t("saveCfg", lang)}
       </button>

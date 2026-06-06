@@ -27,6 +27,8 @@ model User {
   role         Role     @default(READONLY)
   lastLoginAt  DateTime?
   createdAt    DateTime @default(now())
+  totpSecret   String?
+  totpEnabled  Boolean  @default(false)
 
   auditLogs         AuditLog[]
   verifiedItems     RegressionItem[]
@@ -35,6 +37,23 @@ model User {
   releases          Release[]
   reports           Report[]
   reviewedSamples   AiSample[]
+  sessions          Session[]
+}
+
+model Session {
+  id          String    @id @default(cuid())
+  tokenId     String    @unique
+  userId      String
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt   DateTime  @default(now())
+  lastSeenAt  DateTime  @default(now())
+  expiresAt   DateTime
+  ip          String?
+  userAgent   String?
+  revokedAt   DateTime?
+
+  @@index([userId])
+  @@index([tokenId])
 }
 
 model AuditLog {
@@ -235,6 +254,10 @@ model Deployment {
   deployedBy   User?       @relation(fields: [deployedById], references: [id])
   rollbackOfId String?
   deployedAt   DateTime    @default(now())
+  startedAt    DateTime?
+  finishedAt   DateTime?
+  durationMs   Int?
+  logUrl       String?
 
   @@index([environment, deployedAt])
 }
@@ -396,6 +419,56 @@ model AiRegressionCase {
   baselineModel  String?
   createdAt      DateTime          @default(now())
   runs           AiRegressionRun[]
+}
+
+// ─────────────────── Prompt/version tracking ────────────────────
+
+model PromptVersion {
+  id          String   @id @default(cuid())
+  module      String
+  name        String
+  version     Int      @default(1)
+  template    String
+  variables   String[] @default([])
+  notes       String?
+  deployedAt  DateTime?
+  testResults Json?    // {passed, failed, avgScore}
+  archivedAt  DateTime?
+  createdById String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@unique([module, name, version])
+  @@index([module, createdAt])
+}
+
+// ─────────────────── Fallback model policies ────────────────────
+
+enum FallbackKind {
+  CHEAP_MODEL
+  HIGH_QUALITY_MODEL
+  LOCAL
+  DETERMINISTIC
+}
+
+model FallbackPolicy {
+  id                String      @id @default(cuid())
+  module            String      @unique
+  primaryModel      String
+  fallbackModel     String
+  fallbackKind      FallbackKind @default(CHEAP_MODEL)
+  triggerOnError    Boolean     @default(true)
+  triggerOnTimeout  Boolean     @default(false)
+  triggerOnHighCost Boolean     @default(false)
+  triggerOnLowQuality Boolean   @default(false)
+  maxRetries        Int         @default(1)
+  timeoutMs         Int?
+  costThresholdUsd  Float?
+  qualityThreshold  Float?
+  enabled           Boolean     @default(true)
+  notes             String?
+  createdAt         DateTime    @default(now())
+  updatedAt         DateTime    @updatedAt
 }
 
 model AiRegressionRun {
@@ -629,6 +702,8 @@ model BillingEvent {
   totalCost     Float    @default(0)
   currency      String   @default("USD")
   module        String   @default("unknown")
+  feature       String?  // sub-feature within a module
+  environment   String?  // DEV | STAGING | PROD — optional, set by caller
   userId        String?
   projectId     String?
   isByok        Boolean  @default(false)
@@ -640,6 +715,7 @@ model BillingEvent {
   @@index([provider, requestAt])
   @@index([module, requestAt])
   @@index([requestAt])
+  @@index([environment, requestAt])
 }
 
 model BillingBudget {
@@ -682,6 +758,19 @@ model ProviderCredential {
   @@unique([provider, credType])
 }
 
+model ModuleBudget {
+  id          String   @id @default(cuid())
+  module      String
+  period      String   // daily | weekly | monthly
+  limitAmount Float
+  currency    String   @default("USD")
+  enabled     Boolean  @default(true)
+  createdAt   DateTime @default(now())
+
+  @@unique([module, period])
+  @@index([module])
+}
+
 model ReconciliationRun {
   id            String   @id @default(cuid())
   provider      String
@@ -698,6 +787,58 @@ model ReconciliationRun {
 
   @@unique([provider, forDate])
   @@index([createdAt])
+}
+
+// ──────────────── QA Checklist per Release & Quality Gates (Section 7) ────────────────
+
+enum ChecklistItemKind {
+  MANUAL
+  AUTOMATED
+}
+
+enum ChecklistPriority {
+  P0
+  P1
+  P2
+}
+
+model ReleaseChecklist {
+  id          String      @id @default(cuid())
+  version     String
+  environment Environment
+  title       String?
+  createdAt   DateTime    @default(now())
+  items       ReleaseChecklistItem[]
+
+  @@index([version, environment])
+}
+
+model ReleaseChecklistItem {
+  id          String            @id @default(cuid())
+  checklistId String
+  checklist   ReleaseChecklist  @relation(fields: [checklistId], references: [id], onDelete: Cascade)
+  title       String
+  description String?
+  kind        ChecklistItemKind @default(MANUAL)
+  priority    ChecklistPriority @default(P1)
+  status      CheckStatus       @default(STALE)
+  owner       String?
+  reviewer    String?
+  verifiedAt  DateTime?
+  notes       String?
+  createdAt   DateTime          @default(now())
+  updatedAt   DateTime          @updatedAt
+}
+
+model QualityGate {
+  id              String      @id @default(cuid())
+  environment     Environment @unique
+  minPassRate     Float       @default(0.8)
+  requireP0Checks Boolean     @default(true)
+  blockOnFailing  Boolean     @default(true)
+  enabled         Boolean     @default(true)
+  createdAt       DateTime    @default(now())
+  updatedAt       DateTime    @updatedAt
 }
 
 // ── Section 16: Deploy runs (Deployment model from Section 6 stays the record-of-truth) ──
@@ -717,8 +858,26 @@ model DeployRun {
   log           String   @default("")
   startedAt     DateTime @default(now())
   finishedAt    DateTime?
+  healthStatus  String   @default("pending") // pending | watching | healthy | degraded | error
+  healthPort    Int?
+
+  postDeployChecks PostDeployCheck[]
 
   @@index([environment, startedAt])
+}
+
+model PostDeployCheck {
+  id          String   @id @default(cuid())
+  deployRunId String
+  deployRun   DeployRun @relation(fields: [deployRunId], references: [id])
+  url         String
+  httpStatus  Int?
+  durationMs  Int?
+  ok          Boolean
+  checkedAt   DateTime @default(now())
+  error       String?
+
+  @@index([deployRunId, checkedAt])
 }
 
 // ── Section 17: Migration plans ──
@@ -744,4 +903,149 @@ model MigrationPlan {
   createdAt     DateTime @default(now())
 
   @@index([status, createdAt])
+}
+
+// ────────────────────────── Backup & Restore ─────────────────────────────────
+
+enum BackupTargetKind {
+  DATABASE
+  VOLUME
+  CONFIG
+  UPLOAD
+  FULL
+}
+
+enum BackupStatus {
+  PENDING
+  RUNNING
+  SUCCESS
+  FAILED
+  EXPIRED
+}
+
+model BackupSchedule {
+  id          String           @id @default(cuid())
+  name        String
+  targetKind  BackupTargetKind
+  targetRef   String
+  cronExpr    String
+  retainDays  Int              @default(7)
+  destination String           @default("local")
+  enabled     Boolean          @default(true)
+  lastRunAt   DateTime?
+  nextRunAt   DateTime?
+  createdAt   DateTime         @default(now())
+  jobs        BackupJob[]
+}
+
+model BackupJob {
+  id            String           @id @default(cuid())
+  scheduleId    String?
+  schedule      BackupSchedule?  @relation(fields: [scheduleId], references: [id])
+  targetKind    BackupTargetKind
+  targetRef     String
+  status        BackupStatus     @default(PENDING)
+  sizeBytes     BigInt?
+  path          String?
+  destination   String           @default("local")
+  log           String?
+  error         String?
+  startedAt     DateTime?
+  finishedAt    DateTime?
+  expiresAt     DateTime?
+  triggeredById String?
+  createdAt     DateTime         @default(now())
+}
+
+// ──────────────────────── Domains & SSL ──────────────────────────────────────
+
+enum DnsStatus {
+  UNKNOWN
+  OK
+  MISMATCH
+  UNREACHABLE
+}
+
+enum SslStatus {
+  UNKNOWN
+  VALID
+  EXPIRING_SOON
+  EXPIRED
+  INVALID
+}
+
+model Domain {
+  id            String    @id @default(cuid())
+  name          String    @unique
+  service       String?
+  proxyTarget   String?
+  sslStatus     SslStatus @default(UNKNOWN)
+  sslExpiry     DateTime?
+  sslIssuer     String?
+  sslAutoRenew  Boolean   @default(false)
+  dnsStatus     DnsStatus @default(UNKNOWN)
+  dnsResolvesTo String?
+  lastCheckedAt DateTime?
+  notes         String?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+}
+
+// ────────────────────── Runbook Library ──────────────────────────────────────
+
+enum RunbookCategory {
+  INCIDENT
+  DEPLOY
+  MAINTENANCE
+  SECURITY
+  DATABASE
+  NETWORK
+  GENERAL
+}
+
+enum RunbookRunStatus {
+  RUNNING
+  COMPLETED
+  ABORTED
+}
+
+model Runbook {
+  id          String          @id @default(cuid())
+  title       String
+  description String?
+  category    RunbookCategory @default(GENERAL)
+  steps       Json
+  tags        String[]
+  enabled     Boolean         @default(true)
+  lastUsedAt  DateTime?
+  createdById String?
+  createdAt   DateTime        @default(now())
+  updatedAt   DateTime        @updatedAt
+  runs        RunbookRun[]
+}
+
+model RunbookRun {
+  id            String           @id @default(cuid())
+  runbookId     String
+  runbook       Runbook          @relation(fields: [runbookId], references: [id], onDelete: Cascade)
+  status        RunbookRunStatus @default(RUNNING)
+  triggeredById String?
+  notes         String?
+  stepProgress  Int              @default(0)
+  startedAt     DateTime         @default(now())
+  finishedAt    DateTime?
+}
+
+// ──────────────────────── Environment Drift Detection ────────────────────────
+
+model EnvSnapshot {
+  id          String   @id @default(cuid())
+  environment String   // "production" | "staging" | "dev" | custom
+  service     String   // container/service name
+  key         String
+  value       String?  // null = key exists but value is secret/masked
+  masked      Boolean  @default(false)
+  capturedAt  DateTime @default(now())
+
+  @@index([environment, service])
 }

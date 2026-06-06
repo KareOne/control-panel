@@ -337,8 +337,12 @@ function ConfigEditor({
 
   useEffect(() => {
     fetch("/api/logs/config", { credentials: "include" })
-      .then((r) => r.json())
-      .then((d) => { setCfg(d); setLoading(false); });
+      .then((r) => {
+        if (!r.ok) throw new Error(String(r.status));
+        return r.json();
+      })
+      .then((d) => { setCfg(d); setLoading(false); })
+      .catch(() => setLoading(false));
   }, []);
 
   const save = async () => {
@@ -600,6 +604,10 @@ export default function LogsPage() {
           includeSessions: true,
         }),
       });
+      if (!res.ok) {
+        const text = await res.text().catch(() => String(res.status));
+        throw new Error(text.length < 200 ? text : `HTTP ${res.status}`);
+      }
       const data: QueryResult = await res.json();
       if (!data.ok) {
         setQueryError(data.error ?? "Unknown error");

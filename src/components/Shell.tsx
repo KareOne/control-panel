@@ -1,17 +1,20 @@
 "use client";
 import Link from "next/link";
+import { useEffect, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import useSWR from "swr";
 import { NAV, t } from "@/lib/i18n";
 import { useUI } from "./Providers";
 import { fetcher } from "@/lib/fetcher";
+import { CommandPalette } from "./CommandPalette";
 import {
   Moon, Sun, Globe, LogOut,
   LayoutDashboard, Boxes, Server, Network, Workflow,
   Package, Rocket, GitMerge, FlaskConical,
   ClipboardCheck, BarChart2, Sparkles,
   ShieldCheck, Bell, Plug, DollarSign, FileText, Search, Settings,
-  ScrollText, Milestone,
+  ScrollText, Milestone, BookOpen, HardDrive, Globe2, CalendarClock,
+  GitFork, GitCompare, Share2,
 } from "lucide-react";
 
 type NavKey = typeof NAV[number]["key"];
@@ -19,11 +22,12 @@ type NavKey = typeof NAV[number]["key"];
 /* ─── Sidebar grouping ──────────────────────────────────────────────────── */
 const NAV_GROUPS: { en: string; fa: string; items: NavKey[] }[] = [
   { en: "Dashboard",         fa: "داشبورد",         items: ["overview"] },
-  { en: "Operations",        fa: "عملیات",           items: ["containers", "server", "ports", "async", "logs", "scraper-flow"] },
-  { en: "Delivery",          fa: "تحویل",            items: ["deployments", "deploy", "migration", "tests"] },
+  { en: "Operations",        fa: "عملیات",           items: ["containers", "server", "ports", "async", "logs", "scraper-flow", "runbooks", "depmap"] },
+  { en: "Delivery",          fa: "تحویل",            items: ["deployments", "deploy", "migration", "tests", "compare"] },
   { en: "Quality",           fa: "کیفیت",            items: ["qa", "benchmarks", "ai-quality"] },
   { en: "Security & Control",fa: "امنیت و کنترل",   items: ["access", "alerts", "integrations"] },
   { en: "Business",          fa: "کسب‌وکار",         items: ["billing", "reports", "discovery"] },
+  { en: "Infrastructure",    fa: "زیرساخت",          items: ["backup", "domains", "crons", "drift"] },
   { en: "System",            fa: "سیستم",            items: ["settings"] },
 ];
 
@@ -49,6 +53,13 @@ const NAV_ICON: Record<NavKey, React.ReactNode> = {
   settings:    <Settings size={15} />,
   logs:           <ScrollText size={15} />,
   "scraper-flow": <Milestone size={15} />,
+  runbooks:       <BookOpen size={15} />,
+  backup:         <HardDrive size={15} />,
+  domains:        <Globe2 size={15} />,
+  crons:          <CalendarClock size={15} />,
+  drift:          <GitFork size={15} />,
+  compare:        <GitCompare size={15} />,
+  depmap:         <Share2 size={15} />,
 };
 
 /* ─── Shell ─────────────────────────────────────────────────────────────── */
@@ -57,6 +68,18 @@ export function Shell({ children }: { children: React.ReactNode }) {
   const path = usePathname();
   const router = useRouter();
   const { data: me } = useSWR("/api/auth/me", fetcher);
+  const [paletteOpen, setPaletteOpen] = useState(false);
+
+  useEffect(() => {
+    const handle = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key === "k") {
+        e.preventDefault();
+        setPaletteOpen(true);
+      }
+    };
+    document.addEventListener("keydown", handle);
+    return () => document.removeEventListener("keydown", handle);
+  }, []);
 
   if (path === "/login") return <>{children}</>;
 
@@ -70,10 +93,11 @@ export function Shell({ children }: { children: React.ReactNode }) {
       className="flex min-h-screen"
       style={{ background: "var(--bg-main)", color: "var(--text-main)" }}
     >
+      <CommandPalette open={paletteOpen} onClose={() => setPaletteOpen(false)} />
       {/* ── Sidebar ── */}
       <aside
         className="w-64 shrink-0 flex flex-col"
-        style={{ background: "#0b111a", borderInlineEnd: "1px solid var(--border)" }}
+        style={{ background: "#061318", borderInlineEnd: "1px solid var(--border)" }}
       >
         {/* Logo / App name */}
         <div
@@ -104,7 +128,7 @@ export function Shell({ children }: { children: React.ReactNode }) {
                 {/* Group label */}
                 <p
                   className="px-[18px] pt-4 pb-[5px] text-[10px] font-semibold uppercase tracking-[0.08em]"
-                  style={{ color: "#3d4d60" }}
+                  style={{ color: "#3f5a63" }}
                 >
                   {lang === "fa" ? group.fa : group.en}
                 </p>
@@ -151,6 +175,27 @@ export function Shell({ children }: { children: React.ReactNode }) {
               </span>
             </div>
           )}
+
+          <button
+            onClick={() => setPaletteOpen(true)}
+            style={{
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "space-between",
+              width: "100%",
+              marginBottom: 8,
+              background: "rgba(255,255,255,0.04)",
+              border: "1px solid var(--border)",
+              borderRadius: 6,
+              padding: "5px 8px",
+              cursor: "pointer",
+              color: "var(--text-muted)",
+              fontSize: 11,
+            }}
+          >
+            <span>Search…</span>
+            <span style={{ fontSize: 10, padding: "1px 5px", borderRadius: 4, background: "rgba(255,255,255,0.08)", border: "1px solid var(--border)", fontFamily: "monospace" }}>⌘K</span>
+          </button>
 
           <div className="flex gap-1.5">
             <button

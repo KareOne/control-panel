@@ -12,6 +12,7 @@ import {
   topBlockers,
   recentChangesTimeline,
   environmentHealthSummary,
+  calculateReadinessScore,
 } from "@/lib/overview";
 
 export const dynamic = "force-dynamic";
@@ -38,10 +39,15 @@ export const GET = handler(async (req: NextRequest) => {
     environmentHealthSummary().catch(() => []),
   ]);
 
+  // Deduction-based honest score: uses already-fetched data, no extra queries.
+  const calculated = calculateReadinessScore(alerts, readiness.components, lastDep);
+
   return json({
-    score: readiness.score,
+    score: calculated.score,
     band: readiness.band,
     breakdown: readiness.components,
+    scoreBreakdown: calculated.breakdown,
+    deployStatus: calculated.deployStatus,
     unavailableComponents: readiness.unavailableComponents,
     partial: readiness.partial,
     gate,

@@ -6,6 +6,8 @@ import { PageHeader, EmptyState } from "@/components/Shell";
 import { useUI } from "@/components/Providers";
 import { t, fmtDate } from "@/lib/i18n";
 import { fetcher } from "@/lib/fetcher";
+import { CheckCircle2, AlertTriangle, Clock, Activity, XCircle } from "lucide-react";
+import { ConfirmDialog } from "@/components/ConfirmDialog";
 
 type Role = "ADMIN" | "ENGINEER" | "REVIEWER" | "READONLY";
 const ENVS = ["DEV", "STAGING", "DEMO", "OPERATIONAL", "PROD"] as const;
@@ -49,6 +51,119 @@ interface DeployRun {
   deploymentId: string | null;
   startedAt: string;
   finishedAt: string | null;
+  healthStatus: string;
+  healthPort: number | null;
+}
+
+interface HealthCheck {
+  id: string;
+  url: string;
+  httpStatus: number | null;
+  durationMs: number | null;
+  ok: boolean;
+  checkedAt: string;
+  error: string | null;
+}
+
+interface HealthData {
+  deployRunId: string;
+  healthStatus: string;
+  summary: { total: number; passed: number; failed: number };
+  checks: HealthCheck[];
+}
+
+const HEALTH_CFG: Record<string, { label: string; cls: string; icon: React.ReactNode }> = {
+  pending:  { label: "Pending",  cls: "text-zinc-400",  icon: <Clock size={11} /> },
+  watching: { label: "Watching", cls: "text-amber-400", icon: <Activity size={11} /> },
+  healthy:  { label: "Healthy",  cls: "text-emerald-400", icon: <CheckCircle2 size={11} /> },
+  degraded: { label: "Degraded", cls: "text-red-400",   icon: <AlertTriangle size={11} /> },
+  error:    { label: "Error",    cls: "text-zinc-500",  icon: <XCircle size={11} /> },
+};
+
+function HealthBadge({ status, runId }: { status: string; runId: string }) {
+  const [open, setOpen] = useState(false);
+  const cfg = HEALTH_CFG[status] ?? HEALTH_CFG.pending;
+  const { data } = useSWR<HealthData>(
+    open ? `/api/deploy/runs/${runId}/health` : null,
+    fetcher,
+    { refreshInterval: status === "watching" ? 5000 : 0 }
+  );
+
+  return (
+    <div style={{ position: "relative" }}>
+      <button
+        onClick={() => setOpen((v) => !v)}
+        className={`flex items-center gap-1 text-xs ${cfg.cls} hover:underline`}
+        title="View health checks"
+      >
+        {cfg.icon} {cfg.label}
+      </button>
+
+      {open && (
+        <div
+          style={{
+            position: "absolute",
+            top: "100%",
+            left: 0,
+            zIndex: 50,
+            minWidth: "340px",
+            background: "var(--bg-card, #1c1c2e)",
+            border: "1px solid var(--border, #2a2a3e)",
+            borderRadius: "8px",
+            padding: "12px",
+            boxShadow: "0 8px 32px rgba(0,0,0,0.4)",
+          }}
+        >
+          <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "8px" }}>
+            <span style={{ fontSize: "12px", fontWeight: 700 }}>Post-deploy checks</span>
+            <button onClick={() => setOpen(false)} style={{ background: "none", border: "none", cursor: "pointer", color: "var(--text-muted, #888)", fontSize: "14px" }}>✕</button>
+          </div>
+          {!data ? (
+            <div style={{ fontSize: "11px", color: "var(--text-muted, #888)" }}>Loading…</div>
+          ) : data.checks.length === 0 ? (
+            <div style={{ fontSize: "11px", color: "var(--text-muted, #888)" }}>No checks recorded yet.</div>
+          ) : (
+            <>
+              <div style={{ fontSize: "11px", color: "var(--text-muted, #888)", marginBottom: "6px" }}>
+                {data.summary.passed}/{data.summary.total} passed
+              </div>
+              <div style={{ maxHeight: "200px", overflowY: "auto" }}>
+                {data.checks.map((c) => (
+                  <div
+                    key={c.id}
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      gap: "8px",
+                      padding: "4px 0",
+                      borderBottom: "1px solid var(--border, #2a2a3e)",
+                      fontSize: "11px",
+                    }}
+                  >
+                    <span style={{ color: c.ok ? "#34d399" : "#f87171", flexShrink: 0 }}>
+                      {c.ok ? "✓" : "✗"}
+                    </span>
+                    <span style={{ color: c.httpStatus ? "#e2e8f0" : "#888" }}>
+                      {c.httpStatus ?? "ERR"}
+                    </span>
+                    <span style={{ color: "#888" }}>{c.durationMs}ms</span>
+                    <span style={{ color: "#888", marginLeft: "auto", flexShrink: 0 }}>
+                      {new Date(c.checkedAt).toLocaleTimeString()}
+                    </span>
+                    {c.error && (
+                      <span style={{ color: "#f87171", fontSize: "10px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: "120px" }} title={c.error}>
+                        {c.error}
+                      </span>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </>
+          )}
+        </div>
+      )}
+    </div>
+  );
 }
 
 export default function Page() {
@@ -79,6 +194,7 @@ export default function Page() {
   const [activeRunId, setActiveRunId] = useState<string | null>(null);
   const [logLines, setLogLines] = useState<string[]>([]);
   const [banner, setBanner] = useState<{ kind: "ok" | "fail"; msg: string } | null>(null);
+  const [confirmDeploy, setConfirmDeploy] = useState(false);
   const esRef = useRef<EventSource | null>(null);
   const logBoxRef = useRef<HTMLDivElement | null>(null);
 
@@ -176,6 +292,15 @@ export default function Page() {
     refreshRuns();
   }
 
+  async function doCancel(id: string) {
+    const res = await fetch(`/api/deploy/runs/${id}/cancel`, { method: "POST" });
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) setBanner({ kind: "fail", msg: body.error || "cancel failed" });
+    refreshRuns();
+  }
+
+  const runningForEnv = (runs || []).find((r) => r.environment === env && r.state === "RUNNING");
+
   const hasDestructive = !!plan?.migrations.some((m) => m.destructive);
   const canDeploy =
     !!plan &&
@@ -205,6 +330,18 @@ export default function Page() {
               }`}
             >
               {banner.msg}
+            </div>
+          )}
+
+          {runningForEnv && (
+            <div className="rounded-md px-4 py-3 text-sm bg-amber-500/10 text-amber-400 border border-amber-600/40 flex items-center gap-2">
+              <span>⚠</span>
+              <span>
+                A deploy is currently running for {env}. Starting another will be blocked.{" "}
+                <button className="underline" onClick={() => streamRun(runningForEnv.id)}>
+                  View run {runningForEnv.id.slice(0, 8)}
+                </button>
+              </span>
             </div>
           )}
 
@@ -264,7 +401,7 @@ export default function Page() {
             <div className="md:col-span-3 flex items-end">
               <button
                 onClick={loadPlan}
-                className="bg-[#183661] hover:bg-[#1e478e] text-white rounded px-4 py-2 text-sm"
+                className="bg-[#09637E] hover:bg-[#088395] text-white rounded px-4 py-2 text-sm"
               >
                 {t("dpReview", lang)}
               </button>
@@ -304,6 +441,7 @@ export default function Page() {
                     <th className="text-start px-4 py-2">{t("dpService", lang)}</th>
                     <th className="text-start px-4 py-2">{t("dpCommit", lang)}</th>
                     <th className="text-start px-4 py-2">{t("dpState", lang)}</th>
+                    <th className="text-start px-4 py-2">Health</th>
                     <th className="text-start px-4 py-2">{t("dpStarted", lang)}</th>
                     <th className="text-start px-4 py-2"></th>
                   </tr>
@@ -332,6 +470,9 @@ export default function Page() {
                           {r.state}
                         </span>
                       </td>
+                      <td className="px-4 py-2">
+                        <HealthBadge status={r.healthStatus} runId={r.id} />
+                      </td>
                       <td className="px-4 py-2">{fmtDate(r.startedAt, lang)}</td>
                       <td className="px-4 py-2">
                         <div className="flex gap-3">
@@ -347,6 +488,14 @@ export default function Page() {
                               onClick={() => doRollback(r.id)}
                             >
                               {t("dpRollback", lang)}
+                            </button>
+                          )}
+                          {isAdmin && (r.state === "RUNNING" || r.state === "QUEUED") && (
+                            <button
+                              className="rounded border border-red-600/50 bg-red-500/10 px-2 py-0.5 text-xs text-red-400 hover:bg-red-500/20"
+                              onClick={() => doCancel(r.id)}
+                            >
+                              Cancel
                             </button>
                           )}
                         </div>
@@ -472,8 +621,8 @@ export default function Page() {
               </button>
               <button
                 disabled={!canDeploy}
-                className="px-4 py-2 text-sm rounded bg-[#183661] hover:bg-[#1e478e] text-white disabled:opacity-40 disabled:cursor-not-allowed"
-                onClick={doDeploy}
+                className="px-4 py-2 text-sm rounded bg-[#09637E] hover:bg-[#088395] text-white disabled:opacity-40 disabled:cursor-not-allowed"
+                onClick={() => setConfirmDeploy(true)}
               >
                 {t("dpDeployNow", lang)}
               </button>
@@ -481,6 +630,15 @@ export default function Page() {
           </div>
         </div>
       )}
+      <ConfirmDialog
+        open={confirmDeploy}
+        title={`Deploy to ${env}?`}
+        message={`This will start a ${strategy} deploy to ${env}. Health checks and optional auto-rollback are active. Type the environment name to confirm.`}
+        confirmWord={env}
+        confirmLabel="Deploy"
+        onConfirm={() => { setConfirmDeploy(false); doDeploy(); }}
+        onCancel={() => setConfirmDeploy(false)}
+      />
     </div>
   );
 }
@@ -508,6 +666,7 @@ function ConfigEditor({
         healthConsecutive: Number(form.healthConsecutive),
         healthIntervalMs: Number(form.healthIntervalMs),
         drainSec: Number(form.drainSec),
+        autoRollback: !!form.autoRollback,
         statefulServices:
           typeof form.statefulServices === "string"
             ? form.statefulServices
@@ -563,11 +722,25 @@ function ConfigEditor({
         <div className="md:col-span-3">
           {fld("statefulServices", t("dpStateful", lang))}
         </div>
+        <div className="md:col-span-3">
+          <label className="flex items-start gap-3 cursor-pointer select-none">
+            <input
+              type="checkbox"
+              className="mt-0.5 accent-[var(--primary)]"
+              checked={!!form.autoRollback}
+              onChange={(e) => setForm({ ...form, autoRollback: e.target.checked })}
+            />
+            <span className="text-sm">
+              <span className="font-medium text-[var(--text-main)]">{t("dpAutoRollback", lang)}</span>
+              <span className="block text-xs text-[var(--text-muted)] mt-0.5">{t("dpAutoRollbackDesc", lang)}</span>
+            </span>
+          </label>
+        </div>
       </div>
       <div className="px-4 py-3 border-t border-zinc-200 dark:border-zinc-800 flex items-center gap-3">
         <button
           onClick={save}
-          className="bg-[#183661] hover:bg-[#1e478e] text-white rounded px-4 py-2 text-sm"
+          className="bg-[#09637E] hover:bg-[#088395] text-white rounded px-4 py-2 text-sm"
         >
           {t("dpSave", lang)}
         </button>
