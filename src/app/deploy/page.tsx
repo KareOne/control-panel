@@ -184,7 +184,7 @@ export default function Page() {
 
   const [env, setEnv] = useState<(typeof ENVS)[number]>("DEV");
   const [commit, setCommit] = useState("");
-  const [service, setService] = useState("");
+  const [service, setService] = useState("app");
   const [strategy, setStrategy] = useState<(typeof STRATEGIES)[number]>("blue_green");
   const [plan, setPlan] = useState<Plan | null>(null);
   const [planErr, setPlanErr] = useState<string | null>(null);
@@ -377,12 +377,14 @@ export default function Page() {
             </label>
             <label className="text-sm">
               <span className="block mb-1 text-zinc-500">{t("dpService", lang)}</span>
-              <input
+              <select
                 className="w-full bg-transparent border border-zinc-300 dark:border-zinc-700 rounded px-2 py-1.5"
                 value={service}
                 onChange={(e) => setService(e.target.value)}
-                placeholder="app"
-              />
+              >
+                <option value="app">app — main application</option>
+                <option value="nginx">nginx — reverse proxy</option>
+              </select>
             </label>
             <label className="text-sm">
               <span className="block mb-1 text-zinc-500">{t("dpStrategy", lang)}</span>
