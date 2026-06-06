@@ -31,11 +31,8 @@ async function probeService(key: string, baseUrl: string): Promise<Record<string
   }
 
   if (key === "tracxn") {
-    const [health, search] = await Promise.all([
-      probe("GET", `${baseUrl}/health`),
-      probe("POST", `${baseUrl}/scrape`, { search_term: "fintech", num_companies: 1, freshness_days: 9999 }),
-    ]);
-    return { health, search };
+    // /scrape triggers a real browser session and hangs; health already checks DB
+    return { health: await probe("GET", `${baseUrl}/health`) };
   }
 
   if (key === "twitter") {

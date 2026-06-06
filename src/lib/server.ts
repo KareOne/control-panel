@@ -16,15 +16,18 @@ export async function hostFetch(
   timeoutSec = 8
 ): Promise<{ ok: boolean; statusCode: number; body: string; latencyMs: number }> {
   const t0 = Date.now();
+  // Write JSON body to a temp file to avoid all shell quoting issues with special chars
   const bodyArgs = body
-    ? `-H 'Content-Type: application/json' -d '${JSON.stringify(body).replace(/'/g, "'\\''")}'`
+    ? `-H 'Content-Type: application/json' -d @/tmp/_hf_req`
     : "";
-  // Run everything inside a single sh -c so curl and cat share the same host namespace /tmp
-  const inner = `curl -s -o /tmp/_hf_body -w '%{http_code}' --max-time ${timeoutSec} -X ${method} ${bodyArgs} '${url}' && cat /tmp/_hf_body`;
+  const writeBody = body
+    ? `printf '%s' ${JSON.stringify(JSON.stringify(body))} > /tmp/_hf_req && `
+    : "";
+  // Single sh -c keeps curl + cat in the same host namespace so /tmp/_hf_body is accessible
+  const inner = `${writeBody}curl -s -o /tmp/_hf_body -w '%{http_code}' --max-time ${timeoutSec} -X ${method} ${bodyArgs} ${JSON.stringify(url)} && cat /tmp/_hf_body`;
   const cmd = `nsenter -t 1 -m -n -- sh -c ${JSON.stringify(inner)}`;
   try {
     const { stdout } = await execAsync(cmd, { timeout: (timeoutSec + 3) * 1000 });
-    // stdout = "<status_code><body>" — status code is printed by -w, body by cat
     const statusCode = parseInt(stdout.slice(0, 3), 10) || 0;
     const respBody = stdout.slice(3).trim();
     return { ok: statusCode >= 200 && statusCode < 400, statusCode, body: respBody, latencyMs: Date.now() - t0 };
