@@ -14,7 +14,7 @@ import {
   ClipboardCheck, BarChart2, Sparkles,
   ShieldCheck, Bell, Plug, DollarSign, FileText, Search, Settings,
   ScrollText, Milestone, BookOpen, HardDrive, Globe2, CalendarClock,
-  GitFork, GitCompare, Share2,
+  GitFork, GitCompare, Share2, CloudUpload,
 } from "lucide-react";
 
 type NavKey = typeof NAV[number]["key"];
@@ -27,7 +27,7 @@ const NAV_GROUPS: { en: string; fa: string; items: NavKey[] }[] = [
   { en: "Quality",           fa: "کیفیت",            items: ["qa", "benchmarks", "ai-quality"] },
   { en: "Security & Control",fa: "امنیت و کنترل",   items: ["access", "alerts", "integrations"] },
   { en: "Business",          fa: "کسب‌وکار",         items: ["billing", "reports", "discovery"] },
-  { en: "Infrastructure",    fa: "زیرساخت",          items: ["backup", "domains", "crons", "drift"] },
+  { en: "Infrastructure",    fa: "زیرساخت",          items: ["backup", "domains", "crons", "drift", "infra"] },
   { en: "System",            fa: "سیستم",            items: ["settings"] },
 ];
 
@@ -60,6 +60,7 @@ const NAV_ICON: Record<NavKey, React.ReactNode> = {
   drift:          <GitFork size={15} />,
   compare:        <GitCompare size={15} />,
   depmap:         <Share2 size={15} />,
+  infra:          <CloudUpload size={15} />,
 };
 
 /* ─── Shell ─────────────────────────────────────────────────────────────── */

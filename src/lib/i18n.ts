@@ -29,6 +29,7 @@ export const NAV = [
   { key: "drift", href: "/drift", en: "Env Drift", fa: "انحراف محیط" },
   { key: "compare", href: "/compare", en: "Release Compare", fa: "مقایسه نسخه‌ها" },
   { key: "depmap", href: "/depmap", en: "Dependency Map", fa: "نقشه وابستگی‌ها" },
+  { key: "infra", href: "/infra", en: "MN Infrastructure", fa: "زیرساخت MN" },
 ] as const;
 
 const DICT: Record<string, { en: string; fa: string }> = {
