@@ -39,7 +39,7 @@ const DEFAULT_CONFIG: InfraDeployConfig = {
   ],
 };
 
-export async function getInfraDeployConfig(): Promise<InfraDeployConfig> {
+async function getInfraDeployConfig(): Promise<InfraDeployConfig> {
   return getSetting<InfraDeployConfig>(SETTING_KEY, DEFAULT_CONFIG);
 }
 
